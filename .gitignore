@@ -1,0 +1,15 @@
+## .NET
+bin/
+obj/
+*.user
+
+## IDE
+.idea/
+.vs/
+*.suo
+
+## OS
+.DS_Store
+
+## Local secrets/config overrides
+appsettings.*.local.json
