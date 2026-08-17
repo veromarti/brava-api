@@ -1,0 +1,21 @@
+## .NET build output — must be rebuilt inside the container, not copied from host
+bin/
+obj/
+**/bin/
+**/obj/
+*.user
+
+## IDE
+.idea/
+.vs/
+*.suo
+
+## OS
+.DS_Store
+
+## Git
+.git/
+.gitignore
+
+## Local secrets/config overrides
+appsettings.*.local.json

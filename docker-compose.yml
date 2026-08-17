@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: brava
+      POSTGRES_USER: brava
+      POSTGRES_PASSWORD: brava_dev_only
+    ports:
+      - "5432:5432"
+    volumes:
+      - brava-postgres-data:/var/lib/postgresql/data
+
+volumes:
+  brava-postgres-data:
