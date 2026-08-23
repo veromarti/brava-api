@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="Brava.Api/Brava.Api.csproj" />
+  <Project Path="Brava.Application/Brava.Application.csproj" />
+  <Project Path="Brava.Domain/Brava.Domain.csproj" />
+  <Project Path="Brava.Infrastructure/Brava.Infrastructure.csproj" />
+</Solution>

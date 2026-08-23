@@ -8,7 +8,7 @@ any change. If a request contradicts an accepted ADR, say so before writing code
 
 ## 1. Who you are working with
 
-Karen is a **junior developer and a co-owner of the business**. She is using this
+Vero is a **junior developer and a co-owner of the business**. She is using this
 project to learn architecture and to build a portfolio piece she must be able to
 defend in a technical interview.
 
@@ -24,7 +24,7 @@ defend in a technical interview.
 - Repetitive edits applied across many files
 - Refactors that a passing test suite already covers
 
-### Work Karen writes herself — you review, hint, and explain
+### Work Vero writes herself — you review, hint, and explain
 
 - Domain entities and the EF Core model
 - API endpoint handlers and their contracts
@@ -105,7 +105,7 @@ Brand  1 ──── N  Product  1 ──── N  ProductVariant
 
 **Product** — id, name, slug, description, brand_id
 **ProductVariant** — id, product_id, tone_code?, tone_name?, size?, sell_price,
-unitary_price, physical_stock, available_on_demand, is_active
+cost_price, physical_stock, available_on_demand, is_active
 
 Notes that are easy to get wrong:
 
@@ -144,30 +144,41 @@ Notes that are easy to get wrong:
 ## 7. Where things live
 
 ```
-/src/Brava.Api          ASP.NET Core Web API
-/src/brava-web           Next.js app
-/data                    seed CSVs (products, variants)
-/docs/adr                architecture decision records
+Brava.slnx               solution file — build/run this, not a single .csproj
+Brava.Domain/             entities only, zero package references
+Brava.Application/        IBravaDbContext + (future) services, DTOs
+Brava.Infrastructure/     BravaDbContext, migrations, CSV seeder
+Brava.Api/                Minimal API endpoints, Program.cs, DTOs
+/data                     seed CSVs (products, variants)
+/docs/adr                 architecture decision records
 ```
+
+4-project Clean Architecture layering (Domain ← Application ← Infrastructure ←
+Api), added 2026-08-16. Minimal APIs and plain Services kept — no Controllers,
+no CQRS, no per-entity repositories. `IBravaDbContext` is the one seam between
+Application and Infrastructure. This isn't yet written up as an ADR — worth one
+if it should stick.
 
 ---
 
 ## 8. Current status
 
-**Shipped:** `GET /api/products` and `GET /api/products/{slug}` against an in-memory
-array. Slug lookup is case-insensitive and returns 404 on miss.
+**Shipped:** PostgreSQL + EF Core, seeded from `/data/*.csv`. `GET /api/products`,
+`GET /api/brands`, and `POST /api/products` against the real database.
 
-**In progress:** replacing the in-memory array with PostgreSQL + EF Core, seeded
-from `/data/*.csv`.
+**In progress:** admin login, so `POST /api/products` (currently unauthenticated —
+see ADR-0008) can move behind auth before wider exposure.
 
-**Next, in order:** deploy the current skeleton to Railway → EF Core + Postgres →
+**Next, in order:** admin login → more admin write endpoints (variants, images) →
 product listing page in Next.js → product detail page → WhatsApp deep link → v1 launch.
 
-**Explicitly out of scope for v1** (ADR-0005): cart, checkout, online payment, user
-accounts, stock reservations, admin panel, coupons, newsletter.
+**Explicitly out of scope for v1** (ADR-0005, amended by ADR-0008): cart, checkout,
+online payment, user accounts, stock reservations, coupons, newsletter. Admin
+write endpoints are no longer fully deferred — see ADR-0008 — but the admin
+**panel UI** is still ahead of v1.
 
 Two blanks only the business owners can fill: `stock` on every variant and
-`unitary_price` (cost) on every product. Both are empty in the seed CSVs by design.
+`cost_price` (cost) on every product. Both are empty in the seed CSVs by design.
 
 ---
 
