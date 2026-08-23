@@ -1,3 +1,4 @@
+using Brava.Api.Modules.Products.Images;
 using Brava.Application;
 using Brava.Domain;
 using Brava.Domain.Products;
@@ -10,7 +11,9 @@ public static class ProductEndpoints
     public static IEndpointRouteBuilder MapProductEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapGet("/api/products", GetProducts);
-        app.MapPost("/api/products", CreateProduct);
+        app.MapGet("/api/products/{slug}", GetProductBySlug);
+        app.MapPost("/api/products", CreateProduct).RequireAuthorization();
+        app.MapDelete("/api/products/{slug}", DeactivateProduct).RequireAuthorization();
         return app;
     }
 
@@ -30,6 +33,7 @@ public static class ProductEndpoints
                 ActivePrices = p.Variants
                     .Where(v => v.IsActive && v.SellPrice != null)
                     .Select(v => v.SellPrice!.Value),
+                InStock = p.Variants.Any(v => v.IsActive && v.PhysicalStock > 0),
             })
             // A product with zero qualifying variants has no price to show and
             // must not appear in the listing at all (ADR-0003 consequence).
@@ -40,10 +44,73 @@ public static class ProductEndpoints
                 p.BrandName,
                 p.CategoryName,
                 p.ActivePrices.Min(),
-                p.ActivePrices.Max()))
+                p.ActivePrices.Max(),
+                p.InStock))
             .ToListAsync();
 
         return TypedResults.Ok(products);
+    }
+
+    // ADR-0002: lowercase the incoming slug in C#, then query on it — never
+    // WHERE LOWER(slug) = @p, that defeats the unique index.
+    private static async Task<Results<Ok<ProductDetailDto>, NotFound>> GetProductBySlug(
+        string slug, IBravaDbContext db, IImageStorage imageStorage)
+    {
+        var normalizedSlug = slug.ToLowerInvariant();
+        // IImageStorage.GetPublicUrl is a C# string builder, not SQL-translatable,
+        // so images are pulled as raw StorageKeys first and turned into URLs
+        // after the query materializes.
+        var product = await db.Products
+            .Where(p => p.Slug == normalizedSlug)
+            .Select(p => new
+            {
+                p.Id,
+                p.Slug,
+                p.Name,
+                p.Description,
+                BrandName = p.Brand.Name,
+                CategoryName = p.Category.Name,
+                p.IsActive,
+                Variants = p.Variants
+                    .Select(v => new ProductVariantDto(
+                        v.Id,
+                        v.Sku,
+                        v.ToneCode,
+                        v.ToneName,
+                        v.Units,
+                        v.VolumeMl,
+                        v.MassG,
+                        v.SellPrice,
+                        v.PhysicalStock,
+                        v.AvailableOnDemand,
+                        v.IsActive))
+                    .ToList(),
+                Images = p.Images
+                    .OrderBy(i => i.DisplayOrder)
+                    .Select(i => new { i.Id, i.StorageKey, i.AltText, i.DisplayOrder, i.ProductVariantId })
+                    .ToList(),
+            })
+            .FirstOrDefaultAsync();
+
+        if (product is null)
+        {
+            return TypedResults.NotFound();
+        }
+
+        var dto = new ProductDetailDto(
+            product.Id,
+            product.Slug,
+            product.Name,
+            product.Description,
+            product.BrandName,
+            product.CategoryName,
+            product.IsActive,
+            product.Variants,
+            product.Images
+                .Select(i => new ImageDto(i.Id, imageStorage.GetPublicUrl(i.StorageKey), i.AltText, i.DisplayOrder, i.ProductVariantId))
+                .ToList());
+
+        return TypedResults.Ok(dto);
     }
 
     // Decisions locked in: products may be created with zero variants (not all
@@ -91,5 +158,27 @@ public static class ProductEndpoints
 
         var dto = new ProductDto(product.Id, product.Slug, product.Name, product.Description, product.IsActive);
         return TypedResults.Created($"/api/products/{product.Slug}", dto);
+    }
+
+    // Soft delete, not a row removal — sets IsActive=false so the product
+    // drops out of GET /api/products (which already filters on IsActive) and
+    // GET /api/products/{slug} still returns it for admins/audit, just with
+    // IsActive=false. No hard DELETE exists; nothing in this codebase removes
+    // catalog rows outright.
+    private static async Task<Results<NoContent, NotFound<string>>> DeactivateProduct(
+        string slug, IBravaDbContext db)
+    {
+        var normalizedSlug = slug.ToLowerInvariant();
+        var product = await db.Products.FirstOrDefaultAsync(p => p.Slug == normalizedSlug);
+        if (product is null)
+        {
+            return TypedResults.NotFound($"Product '{slug}' not found.");
+        }
+
+        product.IsActive = false;
+        product.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+
+        return TypedResults.NoContent();
     }
 }

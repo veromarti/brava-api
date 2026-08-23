@@ -1,16 +1,32 @@
+using System.Text;
 using Brava.Api.Modules.Auth;
 using Brava.Api.Modules.Brands;
+using Brava.Api.Modules.Categories;
 using Brava.Api.Modules.Products;
+using Brava.Api.Modules.Products.Images;
+using Brava.Api.Modules.Products.Variants;
 using Brava.Application;
 using Brava.Domain.Admins;
 using Brava.Infrastructure.Persistence;
 using Brava.Infrastructure.Persistence.Seeding;
+using Brava.Infrastructure.Storage;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Secrets (JWT signing key, R2 credentials) go here instead of
+// appsettings.{Environment}.json, which is committed to git. This file is
+// covered by the .gitignore pattern "appsettings.*.local.json" — create it
+// locally, it's never pushed. In Production, the equivalent secrets come
+// from Railway environment variables instead (same pattern as
+// ConnectionStrings already uses), so this file is Development-only.
+builder.Configuration.AddJsonFile(
+    $"appsettings.{builder.Environment.EnvironmentName}.local.json", optional: true, reloadOnChange: true);
 
 // Railway assigns the listen port at runtime via PORT; bind to it explicitly.
 var port = Environment.GetEnvironmentVariable("PORT");
@@ -31,6 +47,28 @@ builder.Services.AddDbContext<BravaDbContext>(options =>
 // this is what keeps the dependency arrow pointing the right way.
 builder.Services.AddScoped<IBravaDbContext>(sp => sp.GetRequiredService<BravaDbContext>());
 builder.Services.AddScoped<IPasswordHasher<Admin>, PasswordHasher<Admin>>();
+// Config is validated lazily inside the client (see CloudflareR2ImageStorage) so
+// the app can still start before R2 is set up — only image endpoints fail.
+builder.Services.AddSingleton<IImageStorage, CloudflareR2ImageStorage>();
+
+// Same signing key AuthEndpoints.Login uses to issue tokens — read once here
+// so a misconfigured deployment fails at startup, not on the first login.
+var jwtSigningKey = builder.Configuration["Jwt:SigningKey"]
+    ?? throw new InvalidOperationException("Configuration 'Jwt:SigningKey' is not set.");
+builder.Services
+    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = false,
+            ValidateAudience = false,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSigningKey)),
+        };
+    });
+builder.Services.AddAuthorization();
 
 var app = builder.Build();
 
@@ -66,8 +104,14 @@ app.UseForwardedHeaders(forwardedHeadersOptions);
 
 app.UseHttpsRedirection();
 
+app.UseAuthentication();
+app.UseAuthorization();
+
 app.MapProductEndpoints();
+app.MapVariantEndpoints();
+app.MapImageEndpoints();
 app.MapBrandEndpoints();
+app.MapCategoryEndpoints();
 app.MapAuthEndpoints();
 
 app.Run();

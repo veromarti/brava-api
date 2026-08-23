@@ -11,4 +11,9 @@ public record ProductListItemDto(
     string BrandName,
     string CategoryName,
     decimal PriceFrom,
-    decimal PriceTo);
+    decimal PriceTo,
+    // True when any active variant has physical stock. A multi-variant product
+    // can be true here but still show "Agotado" on one specific tone/size —
+    // this is a listing-card signal, not per-variant detail (that's on
+    // GET /api/products/{slug}).
+    bool InStock);
