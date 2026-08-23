@@ -19,8 +19,11 @@ public static class ProductEndpoints
         return app;
     }
 
-    private static async Task<Ok<List<ProductListItemDto>>> GetProducts(IBravaDbContext db)
+    private static async Task<Ok<List<ProductListItemDto>>> GetProducts(IBravaDbContext db, IImageStorage imageStorage)
     {
+        // Same two-phase pattern as GetProductBySlug: IImageStorage.GetPublicUrl
+        // isn't SQL-translatable, so pull the raw StorageKey here and turn it
+        // into a URL after the query materializes.
         var products = await db.Products
             .Where(p => p.IsActive)
             .Select(p => new
@@ -36,10 +39,14 @@ public static class ProductEndpoints
                     .Where(v => v.IsActive && v.SellPrice != null)
                     .Select(v => v.SellPrice!.Value),
                 InStock = p.Variants.Any(v => v.IsActive && v.PhysicalStock > 0),
+                ImageKey = p.Images.OrderBy(i => i.DisplayOrder).Select(i => i.StorageKey).FirstOrDefault(),
             })
             // A product with zero qualifying variants has no price to show and
             // must not appear in the listing at all (ADR-0003 consequence).
             .Where(p => p.ActivePrices.Any())
+            .ToListAsync();
+
+        var dtos = products
             .Select(p => new ProductListItemDto(
                 p.Slug,
                 p.Name,
@@ -47,10 +54,11 @@ public static class ProductEndpoints
                 p.CategoryName,
                 p.ActivePrices.Min(),
                 p.ActivePrices.Max(),
-                p.InStock))
-            .ToListAsync();
+                p.InStock,
+                p.ImageKey is null ? null : imageStorage.GetPublicUrl(p.ImageKey)))
+            .ToList();
 
-        return TypedResults.Ok(products);
+        return TypedResults.Ok(dtos);
     }
 
     // No IsActive filter, unlike GetProducts — admins need to find and
@@ -60,7 +68,7 @@ public static class ProductEndpoints
         var products = await db.Products
             .OrderBy(p => p.Name)
             .Select(p => new AdminProductListItemDto(
-                p.Id, p.Slug, p.Name, p.Brand.Name, p.Category.Name, p.IsActive))
+                p.Id, p.Slug, p.Name, p.Brand.Name, p.Category.Name, p.IsActive, p.Images.Count))
             .ToListAsync();
 
         return TypedResults.Ok(products);

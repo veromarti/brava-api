@@ -16,4 +16,7 @@ public record ProductListItemDto(
     // can be true here but still show "Agotado" on one specific tone/size —
     // this is a listing-card signal, not per-variant detail (that's on
     // GET /api/products/{slug}).
-    bool InStock);
+    bool InStock,
+    // The product's first image by DisplayOrder, or null if it has none yet.
+    // Just a thumbnail for the card — the full gallery is on the detail page.
+    string? ImageUrl);

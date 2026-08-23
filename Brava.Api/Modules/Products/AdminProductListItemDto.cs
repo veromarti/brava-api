@@ -11,4 +11,5 @@ public record AdminProductListItemDto(
     string Name,
     string BrandName,
     string CategoryName,
-    bool IsActive);
+    bool IsActive,
+    int ImageCount);
