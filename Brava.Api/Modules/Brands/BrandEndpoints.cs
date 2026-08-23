@@ -18,7 +18,7 @@ public static class BrandEndpoints
     {
         var brands = await db.Brands
             .Where(b => b.IsActive)
-            .Select(b => new BrandListItemDto(b.Slug, b.Name))
+            .Select(b => new BrandListItemDto(b.Id, b.Slug, b.Name))
             .ToListAsync();
 
         return TypedResults.Ok(brands);

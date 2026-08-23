@@ -70,6 +70,17 @@ builder.Services
     });
 builder.Services.AddAuthorization();
 
+// The admin UI (brava-webpage) calls this API directly from the browser for
+// writes (create/edit/deactivate, image upload), so those requests need CORS,
+// not just the JWT check. "Cors:AllowedOrigins" isn't set in appsettings —
+// add it (a Railway env var in Production, appsettings.Development.local.json
+// locally) once the frontend has a real deployed URL; localhost:3000 covers
+// local dev today.
+var corsOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
+    ?? ["http://localhost:3000"];
+builder.Services.AddCors(options =>
+    options.AddDefaultPolicy(policy => policy.WithOrigins(corsOrigins).AllowAnyHeader().AllowAnyMethod()));
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -103,6 +114,8 @@ forwardedHeadersOptions.KnownProxies.Clear();
 app.UseForwardedHeaders(forwardedHeadersOptions);
 
 app.UseHttpsRedirection();
+
+app.UseCors();
 
 app.UseAuthentication();
 app.UseAuthorization();

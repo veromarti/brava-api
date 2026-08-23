@@ -11,8 +11,10 @@ public static class ProductEndpoints
     public static IEndpointRouteBuilder MapProductEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapGet("/api/products", GetProducts);
+        app.MapGet("/api/products/admin", GetProductsForAdmin).RequireAuthorization();
         app.MapGet("/api/products/{slug}", GetProductBySlug);
         app.MapPost("/api/products", CreateProduct).RequireAuthorization();
+        app.MapPut("/api/products/{slug}", UpdateProduct).RequireAuthorization();
         app.MapDelete("/api/products/{slug}", DeactivateProduct).RequireAuthorization();
         return app;
     }
@@ -46,6 +48,19 @@ public static class ProductEndpoints
                 p.ActivePrices.Min(),
                 p.ActivePrices.Max(),
                 p.InStock))
+            .ToListAsync();
+
+        return TypedResults.Ok(products);
+    }
+
+    // No IsActive filter, unlike GetProducts — admins need to find and
+    // reactivate/edit deactivated products, which the public listing hides.
+    private static async Task<Ok<List<AdminProductListItemDto>>> GetProductsForAdmin(IBravaDbContext db)
+    {
+        var products = await db.Products
+            .OrderBy(p => p.Name)
+            .Select(p => new AdminProductListItemDto(
+                p.Id, p.Slug, p.Name, p.Brand.Name, p.Category.Name, p.IsActive))
             .ToListAsync();
 
         return TypedResults.Ok(products);
@@ -158,6 +173,41 @@ public static class ProductEndpoints
 
         var dto = new ProductDto(product.Id, product.Slug, product.Name, product.Description, product.IsActive);
         return TypedResults.Created($"/api/products/{product.Slug}", dto);
+    }
+
+    // Slug is immutable — see UpdateProductRequest's comment. BrandId/CategoryId
+    // are re-validated the same way CreateProduct validates them; a full
+    // replace, like UpdateVariant, not a patch.
+    private static async Task<Results<Ok<ProductDto>, NotFound<string>>> UpdateProduct(
+        string slug, UpdateProductRequest request, IBravaDbContext db)
+    {
+        var normalizedSlug = slug.ToLowerInvariant();
+        var product = await db.Products.FirstOrDefaultAsync(p => p.Slug == normalizedSlug);
+        if (product is null)
+        {
+            return TypedResults.NotFound($"Product '{slug}' not found.");
+        }
+
+        if (!await db.Brands.AnyAsync(b => b.Id == request.BrandId))
+        {
+            return TypedResults.NotFound($"Brand '{request.BrandId}' not found.");
+        }
+
+        if (!await db.Categories.AnyAsync(c => c.Id == request.CategoryId))
+        {
+            return TypedResults.NotFound($"Category '{request.CategoryId}' not found.");
+        }
+
+        product.Name = request.Name;
+        product.Description = request.Description;
+        product.BrandId = request.BrandId;
+        product.CategoryId = request.CategoryId;
+        product.IsActive = request.IsActive;
+        product.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+
+        var dto = new ProductDto(product.Id, product.Slug, product.Name, product.Description, product.IsActive);
+        return TypedResults.Ok(dto);
     }
 
     // Soft delete, not a row removal — sets IsActive=false so the product

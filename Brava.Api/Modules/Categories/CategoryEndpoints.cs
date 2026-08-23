@@ -20,7 +20,7 @@ public static class CategoryEndpoints
         var categories = await db.Categories
             .Where(c => c.IsActive)
             .OrderBy(c => c.DisplayOrder)
-            .Select(c => new CategoryListItemDto(c.Slug, c.Name, c.DisplayOrder))
+            .Select(c => new CategoryListItemDto(c.Id, c.Slug, c.Name, c.DisplayOrder))
             .ToListAsync();
 
         return TypedResults.Ok(categories);

@@ -1,3 +1,4 @@
+using Brava.Domain.Admins;
 using Brava.Domain.Brands;
 using Brava.Domain.Categories;
 using Brava.Domain.Products;
@@ -13,6 +14,7 @@ namespace Brava.Application;
 /// </summary>
 public interface IBravaDbContext
 {
+    DbSet<Admin> Admins { get; }
     DbSet<Brand> Brands { get; }
     DbSet<Category> Categories { get; }
     DbSet<Product> Products { get; }
