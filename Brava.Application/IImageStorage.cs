@@ -13,4 +13,13 @@ public interface IImageStorage
 
     /// <summary>Pure string formatting, no network call — safe to call for any key.</summary>
     string GetPublicUrl(string key);
+
+    /// <summary>
+    /// For attaching an image already sitting in the bucket (e.g. uploaded
+    /// directly via the Cloudflare dashboard) instead of through UploadAsync.
+    /// Only accepts URLs under this bucket's own PublicBaseUrl — a link to
+    /// someone else's image would leave GetPublicUrl/DeleteAsync operating on
+    /// a key that isn't actually in our bucket.
+    /// </summary>
+    bool TryGetKeyFromUrl(string url, out string key);
 }

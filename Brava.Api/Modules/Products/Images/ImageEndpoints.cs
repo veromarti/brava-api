@@ -22,6 +22,8 @@ public static class ImageEndpoints
         app.MapPost("/api/products/{slug}/images", UploadImage)
             .RequireAuthorization()
             .DisableAntiforgery();
+        app.MapPost("/api/products/{slug}/images/link", LinkImage)
+            .RequireAuthorization();
         app.MapDelete("/api/products/{slug}/images/{imageId:guid}", DeleteImage)
             .RequireAuthorization();
         return app;
@@ -62,6 +64,50 @@ public static class ImageEndpoints
         await using (var stream = request.File.OpenReadStream())
         {
             await storage.UploadAsync(key, stream, request.File.ContentType);
+        }
+
+        var image = new ProductImage
+        {
+            ProductId = product.Id,
+            ProductVariantId = request.ProductVariantId,
+            StorageKey = key,
+            AltText = request.AltText,
+            DisplayOrder = request.DisplayOrder,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        };
+        db.ProductImages.Add(image);
+        await db.SaveChangesAsync();
+
+        var dto = new ImageDto(image.Id, storage.GetPublicUrl(key), image.AltText, image.DisplayOrder, image.ProductVariantId);
+        return TypedResults.Created($"/api/products/{product.Slug}/images/{image.Id}", dto);
+    }
+
+    // For an image already sitting in the bucket (uploaded straight through
+    // the Cloudflare dashboard, say) instead of through this API. The URL
+    // must resolve back to a key in our own bucket (TryGetKeyFromUrl), so
+    // GetPublicUrl/DeleteAsync keep working the same as for an uploaded image
+    // — there's no second code path for "linked" vs "uploaded" images once
+    // the row exists, just a different way of arriving at the StorageKey.
+    private static async Task<Results<Created<ImageDto>, NotFound<string>, BadRequest<string>>> LinkImage(
+        string slug, LinkImageRequest request, IBravaDbContext db, IImageStorage storage)
+    {
+        var normalizedSlug = slug.ToLowerInvariant();
+        var product = await db.Products.FirstOrDefaultAsync(p => p.Slug == normalizedSlug);
+        if (product is null)
+        {
+            return TypedResults.NotFound($"Product '{slug}' not found.");
+        }
+
+        if (request.ProductVariantId is not null &&
+            !await db.ProductVariants.AnyAsync(v => v.Id == request.ProductVariantId && v.ProductId == product.Id))
+        {
+            return TypedResults.BadRequest($"Variant '{request.ProductVariantId}' does not belong to product '{slug}'.");
+        }
+
+        if (!storage.TryGetKeyFromUrl(request.Url, out var key))
+        {
+            return TypedResults.BadRequest("URL must point to an object in this project's own R2 bucket.");
         }
 
         var image = new ProductImage
