@@ -53,6 +53,20 @@ public class CloudflareR2ImageStorage(IConfiguration configuration) : IImageStor
         return $"{_publicBaseUrl!.TrimEnd('/')}/{key}";
     }
 
+    public bool TryGetKeyFromUrl(string url, out string key)
+    {
+        EnsureConfigured();
+        var prefix = _publicBaseUrl!.TrimEnd('/') + "/";
+        if (url.StartsWith(prefix, StringComparison.Ordinal))
+        {
+            key = url[prefix.Length..];
+            return key.Length > 0;
+        }
+
+        key = "";
+        return false;
+    }
+
     private void EnsureConfigured()
     {
         if (_client is not null)
