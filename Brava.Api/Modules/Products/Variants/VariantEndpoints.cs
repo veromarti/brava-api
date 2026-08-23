@@ -13,6 +13,7 @@ public static class VariantEndpoints
         app.MapPut("/api/products/{slug}/variants/{variantId:guid}", UpdateVariant).RequireAuthorization();
         app.MapPost("/api/products/variants/bulk-stock", BulkUpdateStock).RequireAuthorization();
         app.MapDelete("/api/products/{slug}/variants/{variantId:guid}", DeactivateVariant).RequireAuthorization();
+        app.MapPost("/api/products/{slug}/variants/{variantId:guid}/activate", ActivateVariant).RequireAuthorization();
         return app;
     }
 
@@ -162,6 +163,37 @@ public static class VariantEndpoints
         }
 
         variant.IsActive = false;
+        variant.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+
+        return TypedResults.NoContent();
+    }
+
+    // Symmetric to DeactivateVariant — a toggle, not a PUT. Deliberately
+    // doesn't take a request body: the admin UI only ever has the *public*
+    // ProductVariantDto loaded (no CostPrice on it), so reusing UpdateVariant
+    // here would mean resending fields the client doesn't actually have,
+    // silently nulling CostPrice out from under an admin who just wanted to
+    // flip one flag back on. This checks the variant's already-stored
+    // SellPrice instead of asking the client to send one.
+    private static async Task<Results<NoContent, NotFound<string>, BadRequest<string>>> ActivateVariant(
+        string slug, Guid variantId, IBravaDbContext db)
+    {
+        var normalizedSlug = slug.ToLowerInvariant();
+        var variant = await db.ProductVariants
+            .Include(v => v.Product)
+            .FirstOrDefaultAsync(v => v.Id == variantId && v.Product.Slug == normalizedSlug);
+        if (variant is null)
+        {
+            return TypedResults.NotFound($"Variant '{variantId}' not found for product '{slug}'.");
+        }
+
+        if (variant.SellPrice is null)
+        {
+            return TypedResults.BadRequest("This variant has no price set — add one via edit before activating (ADR-0003).");
+        }
+
+        variant.IsActive = true;
         variant.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync();
 
