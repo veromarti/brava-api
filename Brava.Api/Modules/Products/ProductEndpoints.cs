@@ -19,13 +19,22 @@ public static class ProductEndpoints
         return app;
     }
 
-    private static async Task<Ok<List<ProductListItemDto>>> GetProducts(IBravaDbContext db, IImageStorage imageStorage)
+    // ADR-0005: brand and category browsing. brand/category are slugs (not
+    // names or ids) — same reasoning as every other slug lookup in this API,
+    // consistent and stable to link to from the frontend's filter URLs.
+    private static async Task<Ok<List<ProductListItemDto>>> GetProducts(
+        IBravaDbContext db, IImageStorage imageStorage, string? brand, string? category)
     {
+        var normalizedBrand = brand?.ToLowerInvariant();
+        var normalizedCategory = category?.ToLowerInvariant();
+
         // Same two-phase pattern as GetProductBySlug: IImageStorage.GetPublicUrl
         // isn't SQL-translatable, so pull the raw StorageKey here and turn it
         // into a URL after the query materializes.
         var products = await db.Products
             .Where(p => p.IsActive)
+            .Where(p => normalizedBrand == null || p.Brand.Slug == normalizedBrand)
+            .Where(p => normalizedCategory == null || p.Category.Slug == normalizedCategory)
             .Select(p => new
             {
                 p.Slug,
