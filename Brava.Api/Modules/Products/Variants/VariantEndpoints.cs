@@ -190,7 +190,7 @@ public static class VariantEndpoints
 
         if (variant.SellPrice is null)
         {
-            return TypedResults.BadRequest("This variant has no price set — add one via edit before activating (ADR-0003).");
+            return TypedResults.BadRequest("This variant has no price set — add one via edit before activating.");
         }
 
         variant.IsActive = true;
@@ -204,7 +204,7 @@ public static class VariantEndpoints
     {
         if (isActive && sellPrice is null)
         {
-            return "A variant cannot be active without a sell price (ADR-0003).";
+            return "A variant cannot be active without a sell price.";
         }
 
         if (physicalStock < 0)
