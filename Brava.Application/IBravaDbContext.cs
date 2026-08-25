@@ -1,6 +1,7 @@
 using Brava.Domain.Admins;
 using Brava.Domain.Brands;
 using Brava.Domain.Categories;
+using Brava.Domain.Combos;
 using Brava.Domain.Products;
 using Microsoft.EntityFrameworkCore;
 
@@ -20,6 +21,8 @@ public interface IBravaDbContext
     DbSet<Product> Products { get; }
     DbSet<ProductVariant> ProductVariants { get; }
     DbSet<ProductImage> ProductImages { get; }
+    DbSet<Combo> Combos { get; }
+    DbSet<ComboItem> ComboItems { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

@@ -2,6 +2,7 @@ using Brava.Application;
 using Brava.Domain.Admins;
 using Brava.Domain.Brands;
 using Brava.Domain.Categories;
+using Brava.Domain.Combos;
 using Brava.Domain.Products;
 using Microsoft.EntityFrameworkCore;
 
@@ -15,6 +16,8 @@ public class BravaDbContext(DbContextOptions<BravaDbContext> options) : DbContex
     public DbSet<Product> Products => Set<Product>();
     public DbSet<ProductVariant> ProductVariants => Set<ProductVariant>();
     public DbSet<ProductImage> ProductImages => Set<ProductImage>();
+    public DbSet<Combo> Combos => Set<Combo>();
+    public DbSet<ComboItem> ComboItems => Set<ComboItem>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -69,5 +72,23 @@ public class BravaDbContext(DbContextOptions<BravaDbContext> options) : DbContex
         // TODO(Karen): "product must have >= 1 active variant with a price" is
         // enforced in ProductService, not here. A zero-variant product is a
         // valid draft at the data layer.
+
+        modelBuilder.Entity<Combo>().HasIndex(c => c.Slug).IsUnique();
+        modelBuilder.Entity<Combo>().Property(c => c.ManualPrice).HasPrecision(12, 2);
+
+        modelBuilder.Entity<ComboItem>()
+            .HasOne(ci => ci.Combo)
+            .WithMany(c => c.Items)
+            .HasForeignKey(ci => ci.ComboId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        // Restrict, not Cascade — a variant referenced by a combo can still be
+        // deactivated (variants are never hard-deleted, see ADR-0007's
+        // pattern), so this FK never actually blocks anything in practice.
+        modelBuilder.Entity<ComboItem>()
+            .HasOne(ci => ci.ProductVariant)
+            .WithMany()
+            .HasForeignKey(ci => ci.ProductVariantId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

@@ -2,6 +2,7 @@ using System.Text;
 using Brava.Api.Modules.Auth;
 using Brava.Api.Modules.Brands;
 using Brava.Api.Modules.Categories;
+using Brava.Api.Modules.Combos;
 using Brava.Api.Modules.Products;
 using Brava.Api.Modules.Products.Images;
 using Brava.Api.Modules.Products.Variants;
@@ -125,6 +126,7 @@ app.MapVariantEndpoints();
 app.MapImageEndpoints();
 app.MapBrandEndpoints();
 app.MapCategoryEndpoints();
+app.MapComboEndpoints();
 app.MapAuthEndpoints();
 
 app.Run();
