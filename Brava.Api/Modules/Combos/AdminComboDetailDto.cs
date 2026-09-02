@@ -13,4 +13,9 @@ public record AdminComboDetailDto(
     decimal OriginalPrice,
     decimal? ManualPrice,
     decimal FinalPrice,
+    // ImageUrl is the resolved image (kit's own, or the first member
+    // product's as a fallback); HasOwnImage says whether a kit-specific one
+    // is actually set — the edit form needs to tell those apart.
+    string? ImageUrl,
+    bool HasOwnImage,
     List<ComboItemDetailDto> Items);

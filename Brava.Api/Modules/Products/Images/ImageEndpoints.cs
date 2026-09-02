@@ -8,15 +8,6 @@ namespace Brava.Api.Modules.Products.Images;
 
 public static class ImageEndpoints
 {
-    private const long MaxFileSizeBytes = 5 * 1024 * 1024;
-
-    private static readonly Dictionary<string, string> AllowedContentTypes = new()
-    {
-        ["image/jpeg"] = ".jpg",
-        ["image/png"] = ".png",
-        ["image/webp"] = ".webp",
-    };
-
     public static IEndpointRouteBuilder MapImageEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapPost("/api/products/{slug}/images", UploadImage)
@@ -50,12 +41,12 @@ public static class ImageEndpoints
             return TypedResults.BadRequest("File is required.");
         }
 
-        if (request.File.Length > MaxFileSizeBytes)
+        if (request.File.Length > ImageUploadRules.MaxFileSizeBytes)
         {
-            return TypedResults.BadRequest($"File exceeds the {MaxFileSizeBytes / 1024 / 1024} MB limit.");
+            return TypedResults.BadRequest($"File exceeds the {ImageUploadRules.MaxFileSizeBytes / 1024 / 1024} MB limit.");
         }
 
-        if (!AllowedContentTypes.TryGetValue(request.File.ContentType, out var extension))
+        if (!ImageUploadRules.ExtensionByContentType.TryGetValue(request.File.ContentType, out var extension))
         {
             return TypedResults.BadRequest("Only JPEG, PNG, and WebP images are allowed.");
         }

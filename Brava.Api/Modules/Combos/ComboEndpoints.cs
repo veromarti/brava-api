@@ -1,7 +1,9 @@
+using Brava.Api.Modules.Products.Images;
 using Brava.Application;
 using Brava.Domain;
 using Brava.Domain.Combos;
 using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
 namespace Brava.Api.Modules.Combos;
@@ -17,6 +19,16 @@ public static class ComboEndpoints
         app.MapPost("/api/combos", CreateCombo).RequireAuthorization();
         app.MapPut("/api/combos/{slug}", UpdateCombo).RequireAuthorization();
         app.MapDelete("/api/combos/{slug}", DeactivateCombo).RequireAuthorization();
+
+        // A kit has a single image slot (not a gallery like a product), so
+        // these set/clear one key on the combo rather than managing rows.
+        app.MapPost("/api/combos/{slug}/image", UploadComboImage)
+            .RequireAuthorization()
+            .DisableAntiforgery();
+        app.MapPost("/api/combos/{slug}/image/link", LinkComboImage)
+            .RequireAuthorization();
+        app.MapDelete("/api/combos/{slug}/image", DeleteComboImage)
+            .RequireAuthorization();
         return app;
     }
 
@@ -71,7 +83,8 @@ public static class ComboEndpoints
         return TypedResults.Ok(dto);
     }
 
-    private static async Task<Results<Ok<AdminComboDetailDto>, NotFound>> GetComboForAdmin(string slug, IBravaDbContext db)
+    private static async Task<Results<Ok<AdminComboDetailDto>, NotFound>> GetComboForAdmin(
+        string slug, IBravaDbContext db, IImageStorage imageStorage)
     {
         var normalizedSlug = slug.ToLowerInvariant();
         var combo = await LoadFullComboAsync(db, normalizedSlug);
@@ -80,7 +93,7 @@ public static class ComboEndpoints
             return TypedResults.NotFound();
         }
 
-        return TypedResults.Ok(ToAdminDto(combo));
+        return TypedResults.Ok(ToAdminDto(combo, imageStorage));
     }
 
     // Written directly under the same time pressure as the rest of this
@@ -88,7 +101,7 @@ public static class ComboEndpoints
     // a combo needs >= 1 variant, slug is server-generated like products,
     // and VariantIds are validated to exist before insert.
     private static async Task<Results<Created<AdminComboDetailDto>, NotFound<string>, BadRequest<string>>> CreateCombo(
-        CreateComboRequest request, IBravaDbContext db)
+        CreateComboRequest request, IBravaDbContext db, IImageStorage imageStorage)
     {
         if (request.VariantIds.Count == 0)
         {
@@ -131,11 +144,11 @@ public static class ComboEndpoints
         await db.SaveChangesAsync();
 
         var saved = await LoadFullComboAsync(db, combo.Slug);
-        return TypedResults.Created($"/api/combos/{combo.Slug}", ToAdminDto(saved!));
+        return TypedResults.Created($"/api/combos/{combo.Slug}", ToAdminDto(saved!, imageStorage));
     }
 
     private static async Task<Results<Ok<AdminComboDetailDto>, NotFound<string>, BadRequest<string>>> UpdateCombo(
-        string slug, UpdateComboRequest request, IBravaDbContext db)
+        string slug, UpdateComboRequest request, IBravaDbContext db, IImageStorage imageStorage)
     {
         var normalizedSlug = slug.ToLowerInvariant();
         var combo = await db.Combos.Include(c => c.Items).FirstOrDefaultAsync(c => c.Slug == normalizedSlug);
@@ -175,7 +188,7 @@ public static class ComboEndpoints
         await db.SaveChangesAsync();
 
         var saved = await LoadFullComboAsync(db, combo.Slug);
-        return TypedResults.Ok(ToAdminDto(saved!));
+        return TypedResults.Ok(ToAdminDto(saved!, imageStorage));
     }
 
     // Soft delete, same reasoning as ProductEndpoints.DeactivateProduct.
@@ -204,15 +217,127 @@ public static class ComboEndpoints
 
     private static decimal FinalPrice(Combo combo) => combo.ManualPrice ?? OriginalPrice(combo);
 
-    // First item (by Id — this codebase's Guids are generated sequentially,
-    // so lowest Id approximates "added first") whose product has an image.
+    // The kit's own photo when one's been set; otherwise fall back to the
+    // first member product's image (first item by Id — this codebase's Guids
+    // are generated sequentially, so lowest Id approximates "added first").
     private static string? ImageUrl(Combo combo, IImageStorage imageStorage)
     {
+        if (combo.ImageStorageKey is not null)
+        {
+            return imageStorage.GetPublicUrl(combo.ImageStorageKey);
+        }
+
         var firstImage = combo.Items
             .OrderBy(i => i.Id)
             .SelectMany(i => i.ProductVariant.Product.Images.OrderBy(img => img.DisplayOrder))
             .FirstOrDefault();
         return firstImage is null ? null : imageStorage.GetPublicUrl(firstImage.StorageKey);
+    }
+
+    // Only a key we uploaded for this kit (under the combos/ prefix) is safe
+    // to hard-delete from the bucket when the image is replaced or removed —
+    // a linked key might be shared with a product image.
+    private static bool IsOwnedComboKey(string? key) => key is not null && key.StartsWith("combos/");
+
+    private static async Task<Results<Ok<ComboImageDto>, NotFound<string>, BadRequest<string>>> UploadComboImage(
+        string slug, [FromForm] UploadComboImageRequest request, IBravaDbContext db, IImageStorage storage)
+    {
+        var normalizedSlug = slug.ToLowerInvariant();
+        var combo = await db.Combos.FirstOrDefaultAsync(c => c.Slug == normalizedSlug);
+        if (combo is null)
+        {
+            return TypedResults.NotFound($"Combo '{slug}' not found.");
+        }
+
+        if (request.File is null || request.File.Length == 0)
+        {
+            return TypedResults.BadRequest("File is required.");
+        }
+
+        if (request.File.Length > ImageUploadRules.MaxFileSizeBytes)
+        {
+            return TypedResults.BadRequest($"File exceeds the {ImageUploadRules.MaxFileSizeBytes / 1024 / 1024} MB limit.");
+        }
+
+        if (!ImageUploadRules.ExtensionByContentType.TryGetValue(request.File.ContentType, out var extension))
+        {
+            return TypedResults.BadRequest("Only JPEG, PNG, and WebP images are allowed.");
+        }
+
+        var key = $"combos/{combo.Id}/{Guid.NewGuid()}{extension}";
+        await using (var stream = request.File.OpenReadStream())
+        {
+            await storage.UploadAsync(key, stream, request.File.ContentType);
+        }
+
+        var previousKey = combo.ImageStorageKey;
+        combo.ImageStorageKey = key;
+        combo.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+
+        if (IsOwnedComboKey(previousKey) && previousKey != key)
+        {
+            await storage.DeleteAsync(previousKey!);
+        }
+
+        return TypedResults.Ok(new ComboImageDto(storage.GetPublicUrl(key)));
+    }
+
+    // For an image already sitting in the bucket (uploaded straight through
+    // the Cloudflare dashboard). The URL must resolve back to a key in our
+    // own bucket — same rule as the product image link endpoint.
+    private static async Task<Results<Ok<ComboImageDto>, NotFound<string>, BadRequest<string>>> LinkComboImage(
+        string slug, LinkComboImageRequest request, IBravaDbContext db, IImageStorage storage)
+    {
+        var normalizedSlug = slug.ToLowerInvariant();
+        var combo = await db.Combos.FirstOrDefaultAsync(c => c.Slug == normalizedSlug);
+        if (combo is null)
+        {
+            return TypedResults.NotFound($"Combo '{slug}' not found.");
+        }
+
+        if (!storage.TryGetKeyFromUrl(request.Url, out var key))
+        {
+            return TypedResults.BadRequest("URL must point to an object in this project's own R2 bucket.");
+        }
+
+        var previousKey = combo.ImageStorageKey;
+        combo.ImageStorageKey = key;
+        combo.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+
+        if (IsOwnedComboKey(previousKey) && previousKey != key)
+        {
+            await storage.DeleteAsync(previousKey!);
+        }
+
+        return TypedResults.Ok(new ComboImageDto(storage.GetPublicUrl(key)));
+    }
+
+    private static async Task<Results<NoContent, NotFound<string>>> DeleteComboImage(
+        string slug, IBravaDbContext db, IImageStorage storage)
+    {
+        var normalizedSlug = slug.ToLowerInvariant();
+        var combo = await db.Combos.FirstOrDefaultAsync(c => c.Slug == normalizedSlug);
+        if (combo is null)
+        {
+            return TypedResults.NotFound($"Combo '{slug}' not found.");
+        }
+
+        var previousKey = combo.ImageStorageKey;
+        if (previousKey is not null)
+        {
+            combo.ImageStorageKey = null;
+            combo.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+
+            if (IsOwnedComboKey(previousKey))
+            {
+                await storage.DeleteAsync(previousKey);
+            }
+        }
+
+        return TypedResults.NoContent();
     }
 
     private static List<ComboItemDetailDto> ItemDtos(Combo combo) =>
@@ -229,7 +354,8 @@ public static class ComboEndpoints
                 i.ProductVariant.SellPrice ?? 0))
             .ToList();
 
-    private static AdminComboDetailDto ToAdminDto(Combo combo) =>
+    private static AdminComboDetailDto ToAdminDto(Combo combo, IImageStorage imageStorage) =>
         new(combo.Id, combo.Slug, combo.Name, combo.Description, combo.IsActive,
-            OriginalPrice(combo), combo.ManualPrice, FinalPrice(combo), ItemDtos(combo));
+            OriginalPrice(combo), combo.ManualPrice, FinalPrice(combo),
+            ImageUrl(combo, imageStorage), combo.ImageStorageKey is not null, ItemDtos(combo));
 }

@@ -18,6 +18,13 @@ public class Combo
     /// <summary>Admin-authored — conditions, tone substitution notes, etc.</summary>
     public required string Description { get; set; }
 
+    /// <summary>
+    /// Storage key for a kit-specific photo in the image bucket. Null means
+    /// "fall back to the first member product's image" — see
+    /// ComboEndpoints.ImageUrl.
+    /// </summary>
+    public string? ImageStorageKey { get; set; }
+
     /// <summary>Null means "use the sum of item prices" — see ComboEndpoints for where that's computed.</summary>
     public decimal? ManualPrice { get; set; }
 
