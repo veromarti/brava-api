@@ -1,4 +1,5 @@
 using Brava.Api.Modules.Products.Images;
+using Brava.Api.Modules.Products.Variants;
 using Brava.Application;
 using Brava.Domain;
 using Brava.Domain.Products;
@@ -13,6 +14,7 @@ public static class ProductEndpoints
         app.MapGet("/api/products", GetProducts);
         app.MapGet("/api/products/admin", GetProductsForAdmin).RequireAuthorization();
         app.MapGet("/api/products/{slug}", GetProductBySlug);
+        app.MapGet("/api/products/{slug}/admin", GetProductForAdmin).RequireAuthorization();
         app.MapPost("/api/products", CreateProduct).RequireAuthorization();
         app.MapPut("/api/products/{slug}", UpdateProduct).RequireAuthorization();
         app.MapDelete("/api/products/{slug}", DeactivateProduct).RequireAuthorization();
@@ -136,6 +138,72 @@ public static class ProductEndpoints
             product.Description,
             product.BrandName,
             product.CategoryName,
+            product.IsActive,
+            product.Variants,
+            product.Images
+                .Select(i => new ImageDto(i.Id, imageStorage.GetPublicUrl(i.StorageKey), i.AltText, i.DisplayOrder, i.ProductVariantId))
+                .ToList());
+
+        return TypedResults.Ok(dto);
+    }
+
+    // Admin twin of GetProductBySlug: no IsActive gate (there isn't one here
+    // anyway), variants carry CostPrice via the admin VariantDto, and
+    // BrandId/CategoryId come down so edit forms don't reverse-map from names.
+    private static async Task<Results<Ok<AdminProductDetailDto>, NotFound>> GetProductForAdmin(
+        string slug, IBravaDbContext db, IImageStorage imageStorage)
+    {
+        var normalizedSlug = slug.ToLowerInvariant();
+        var product = await db.Products
+            .Where(p => p.Slug == normalizedSlug)
+            .Select(p => new
+            {
+                p.Id,
+                p.Slug,
+                p.Name,
+                p.Description,
+                BrandName = p.Brand.Name,
+                CategoryName = p.Category.Name,
+                p.BrandId,
+                p.CategoryId,
+                p.IsActive,
+                Variants = p.Variants
+                    .Select(v => new VariantDto(
+                        v.Id,
+                        v.ProductId,
+                        v.Sku,
+                        v.ToneCode,
+                        v.ToneName,
+                        v.Units,
+                        v.VolumeMl,
+                        v.MassG,
+                        v.CostPrice,
+                        v.SellPrice,
+                        v.PhysicalStock,
+                        v.AvailableOnDemand,
+                        v.IsActive))
+                    .ToList(),
+                Images = p.Images
+                    .OrderBy(i => i.DisplayOrder)
+                    .Select(i => new { i.Id, i.StorageKey, i.AltText, i.DisplayOrder, i.ProductVariantId })
+                    .ToList(),
+            })
+            .FirstOrDefaultAsync();
+
+        if (product is null)
+        {
+            return TypedResults.NotFound();
+        }
+
+        var dto = new AdminProductDetailDto(
+            product.Id,
+            product.Slug,
+            product.Name,
+            product.Description,
+            product.BrandName,
+            product.CategoryName,
+            product.BrandId,
+            product.CategoryId,
             product.IsActive,
             product.Variants,
             product.Images

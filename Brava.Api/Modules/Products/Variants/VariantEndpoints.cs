@@ -13,6 +13,7 @@ public static class VariantEndpoints
         app.MapPut("/api/products/{slug}/variants/{variantId:guid}", UpdateVariant).RequireAuthorization();
         app.MapPost("/api/products/variants/bulk-stock", BulkUpdateStock).RequireAuthorization();
         app.MapDelete("/api/products/{slug}/variants/{variantId:guid}", DeactivateVariant).RequireAuthorization();
+        app.MapDelete("/api/products/{slug}/variants/{variantId:guid}/permanent", DeleteVariantPermanently).RequireAuthorization();
         app.MapPost("/api/products/{slug}/variants/{variantId:guid}/activate", ActivateVariant).RequireAuthorization();
         return app;
     }
@@ -164,6 +165,45 @@ public static class VariantEndpoints
 
         variant.IsActive = false;
         variant.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+
+        return TypedResults.NoContent();
+    }
+
+    // Hard delete — actually removes the row, unlike DeactivateVariant's soft
+    // IsActive=false. For cleaning up variants created by mistake. Blocked with
+    // a 409 when the variant is in a combo (ComboItem -> ProductVariant is
+    // Restrict): the kit has to be edited or the variant just deactivated
+    // instead. Images pinned to this variant fall back to product-general —
+    // their FK is ON DELETE SET NULL, done explicitly here so the behaviour
+    // doesn't depend on the DB cascade.
+    private static async Task<Results<NoContent, NotFound<string>, Conflict<string>>> DeleteVariantPermanently(
+        string slug, Guid variantId, IBravaDbContext db)
+    {
+        var normalizedSlug = slug.ToLowerInvariant();
+        var variant = await db.ProductVariants
+            .Include(v => v.Product)
+            .FirstOrDefaultAsync(v => v.Id == variantId && v.Product.Slug == normalizedSlug);
+        if (variant is null)
+        {
+            return TypedResults.NotFound($"Variant '{variantId}' not found for product '{slug}'.");
+        }
+
+        var comboCount = await db.ComboItems.CountAsync(ci => ci.ProductVariantId == variantId);
+        if (comboCount > 0)
+        {
+            return TypedResults.Conflict(
+                $"This variant is part of {comboCount} kit(s). Remove it from those kits or deactivate it instead.");
+        }
+
+        var pinnedImages = await db.ProductImages.Where(i => i.ProductVariantId == variantId).ToListAsync();
+        foreach (var image in pinnedImages)
+        {
+            image.ProductVariantId = null;
+            image.UpdatedAt = DateTime.UtcNow;
+        }
+
+        db.ProductVariants.Remove(variant);
         await db.SaveChangesAsync();
 
         return TypedResults.NoContent();
