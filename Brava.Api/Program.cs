@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json.Serialization;
 using Brava.Api.Modules.Auth;
 using Brava.Api.Modules.Brands;
 using Brava.Api.Modules.Categories;
@@ -41,6 +42,13 @@ if (!string.IsNullOrEmpty(port))
 // Add services to the container.
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
+
+// Orders introduced the first enums the API actually serializes to JSON
+// (OrderStatus, PaymentStatus, PaymentMethod) — string names ("Pendiente")
+// over the wire instead of raw ints, so the admin panel and any manual
+// debugging don't have to memorize declaration order.
+builder.Services.ConfigureHttpJsonOptions(options =>
+    options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 
 var connectionString = builder.Configuration.GetConnectionString("BravaDb")
     ?? throw new InvalidOperationException("Connection string 'BravaDb' is not configured.");
