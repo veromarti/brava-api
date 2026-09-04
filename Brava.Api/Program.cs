@@ -4,6 +4,7 @@ using Brava.Api.Modules.Brands;
 using Brava.Api.Modules.Categories;
 using Brava.Api.Modules.Combos;
 using Brava.Api.Modules.Delivery;
+using Brava.Api.Modules.Orders;
 using Brava.Api.Modules.Products;
 using Brava.Api.Modules.Products.Images;
 using Brava.Api.Modules.Products.Variants;
@@ -129,6 +130,7 @@ app.MapBrandEndpoints();
 app.MapCategoryEndpoints();
 app.MapComboEndpoints();
 app.MapDeliveryZoneEndpoints();
+app.MapOrderEndpoints();
 app.MapAuthEndpoints();
 
 app.Run();
