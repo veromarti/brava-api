@@ -2,6 +2,9 @@ using Brava.Domain.Admins;
 using Brava.Domain.Brands;
 using Brava.Domain.Categories;
 using Brava.Domain.Combos;
+using Brava.Domain.Customers;
+using Brava.Domain.Delivery;
+using Brava.Domain.Orders;
 using Brava.Domain.Products;
 using Microsoft.EntityFrameworkCore;
 
@@ -23,6 +26,10 @@ public interface IBravaDbContext
     DbSet<ProductImage> ProductImages { get; }
     DbSet<Combo> Combos { get; }
     DbSet<ComboItem> ComboItems { get; }
+    DbSet<DeliveryZone> DeliveryZones { get; }
+    DbSet<Customer> Customers { get; }
+    DbSet<Order> Orders { get; }
+    DbSet<OrderItem> OrderItems { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

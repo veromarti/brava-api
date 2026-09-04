@@ -3,7 +3,11 @@ using Brava.Domain.Admins;
 using Brava.Domain.Brands;
 using Brava.Domain.Categories;
 using Brava.Domain.Combos;
+using Brava.Domain.Customers;
+using Brava.Domain.Delivery;
+using Brava.Domain.Orders;
 using Brava.Domain.Products;
+using Brava.Infrastructure.Persistence.Seeding;
 using Microsoft.EntityFrameworkCore;
 
 namespace Brava.Infrastructure.Persistence;
@@ -18,6 +22,10 @@ public class BravaDbContext(DbContextOptions<BravaDbContext> options) : DbContex
     public DbSet<ProductImage> ProductImages => Set<ProductImage>();
     public DbSet<Combo> Combos => Set<Combo>();
     public DbSet<ComboItem> ComboItems => Set<ComboItem>();
+    public DbSet<DeliveryZone> DeliveryZones => Set<DeliveryZone>();
+    public DbSet<Customer> Customers => Set<Customer>();
+    public DbSet<Order> Orders => Set<Order>();
+    public DbSet<OrderItem> OrderItems => Set<OrderItem>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -90,5 +98,56 @@ public class BravaDbContext(DbContextOptions<BravaDbContext> options) : DbContex
             .WithMany()
             .HasForeignKey(ci => ci.ProductVariantId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        // --- Orders (Phase 1) --------------------------------------------------
+
+        modelBuilder.Entity<DeliveryZone>().HasIndex(z => z.Name).IsUnique();
+        modelBuilder.Entity<DeliveryZone>().Property(z => z.Price).HasPrecision(12, 2);
+        modelBuilder.Entity<DeliveryZone>().HasData(DeliveryZoneSeedData.Zones);
+
+        modelBuilder.Entity<Customer>().HasIndex(c => c.Phone).IsUnique();
+
+        modelBuilder.Entity<Order>().HasIndex(o => o.Number).IsUnique();
+        modelBuilder.Entity<Order>().HasIndex(o => o.Sequence).IsUnique();
+        modelBuilder.Entity<Order>().Property(o => o.Subtotal).HasPrecision(12, 2);
+        modelBuilder.Entity<Order>().Property(o => o.DeliveryFee).HasPrecision(12, 2);
+        modelBuilder.Entity<Order>().Property(o => o.Total).HasPrecision(12, 2);
+
+        // SetNull everywhere the link is optional and the order already
+        // snapshots what it needs to display/cost — deleting a customer, zone,
+        // variant or combo must never delete or block a historical order.
+        modelBuilder.Entity<Order>()
+            .HasOne(o => o.Customer)
+            .WithMany(c => c.Orders)
+            .HasForeignKey(o => o.CustomerId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<Order>()
+            .HasOne(o => o.DeliveryZone)
+            .WithMany()
+            .HasForeignKey(o => o.DeliveryZoneId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<OrderItem>().Property(i => i.UnitPrice).HasPrecision(12, 2);
+        modelBuilder.Entity<OrderItem>().Property(i => i.UnitCost).HasPrecision(12, 2);
+        modelBuilder.Entity<OrderItem>().Property(i => i.LineTotal).HasPrecision(12, 2);
+
+        modelBuilder.Entity<OrderItem>()
+            .HasOne(i => i.Order)
+            .WithMany(o => o.Items)
+            .HasForeignKey(i => i.OrderId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<OrderItem>()
+            .HasOne(i => i.ProductVariant)
+            .WithMany()
+            .HasForeignKey(i => i.ProductVariantId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<OrderItem>()
+            .HasOne(i => i.Combo)
+            .WithMany()
+            .HasForeignKey(i => i.ComboId)
+            .OnDelete(DeleteBehavior.SetNull);
     }
 }
