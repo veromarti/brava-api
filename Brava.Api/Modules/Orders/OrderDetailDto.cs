@@ -20,6 +20,8 @@ public record OrderDetailDto(
     decimal Total,
     string? Notes,
     DateTime CreatedAt,
+    Guid CreatedByAdminId,
+    string? CreatedByAdminEmail,
     List<OrderItemDetailDto> Items);
 
 public record OrderItemDetailDto(

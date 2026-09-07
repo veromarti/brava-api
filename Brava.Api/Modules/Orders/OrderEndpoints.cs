@@ -1,4 +1,3 @@
-using System.Security.Claims;
 using Brava.Application;
 using Brava.Domain.Combos;
 using Brava.Domain.Customers;
@@ -53,7 +52,7 @@ public static class OrderEndpoints
             return TypedResults.NotFound($"Order '{number}' not found.");
         }
 
-        return TypedResults.Ok(ToDetailDto(order));
+        return TypedResults.Ok(await ToDetailDtoAsync(order, db));
     }
 
     // Design calls made here, same time pressure as the rest of this admin
@@ -63,7 +62,7 @@ public static class OrderEndpoints
     // slug loop: this is a single-admin panel today, not a high-concurrency
     // checkout.
     private static async Task<Results<Created<OrderDetailDto>, NotFound<string>, BadRequest<string>>> CreateOrder(
-        CreateOrderRequest request, IBravaDbContext db, ClaimsPrincipal user)
+        CreateOrderRequest request, IBravaDbContext db)
     {
         var contactName = request.ContactName.Trim();
         var contactPhone = request.ContactPhone.Trim();
@@ -90,6 +89,12 @@ public static class OrderEndpoints
             {
                 return TypedResults.BadRequest("La cantidad debe ser al menos 1.");
             }
+        }
+
+        var admin = await db.Admins.FirstOrDefaultAsync(a => a.Id == request.CreatedByAdminId && a.IsActive);
+        if (admin is null)
+        {
+            return TypedResults.NotFound($"Admin '{request.CreatedByAdminId}' no encontrado o inactivo.");
         }
 
         var deliveryFee = 0m;
@@ -212,7 +217,7 @@ public static class OrderEndpoints
             Subtotal = subtotal,
             Total = subtotal + deliveryFee,
             Notes = request.Notes,
-            CreatedByAdminId = Guid.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!),
+            CreatedByAdminId = admin.Id,
             CreatedAt = now,
             UpdatedAt = now,
         };
@@ -222,7 +227,7 @@ public static class OrderEndpoints
         await db.SaveChangesAsync();
 
         var saved = await LoadFullOrderAsync(db, order.Number);
-        return TypedResults.Created($"/api/orders/{order.Number}", ToDetailDto(saved!));
+        return TypedResults.Created($"/api/orders/{order.Number}", await ToDetailDtoAsync(saved!, db));
     }
 
     private static async Task<Results<Ok<OrderDetailDto>, NotFound<string>>> UpdateOrderStatus(
@@ -239,7 +244,7 @@ public static class OrderEndpoints
         await db.SaveChangesAsync();
 
         var saved = await LoadFullOrderAsync(db, order.Number);
-        return TypedResults.Ok(ToDetailDto(saved!));
+        return TypedResults.Ok(await ToDetailDtoAsync(saved!, db));
     }
 
     private static async Task<Results<Ok<OrderDetailDto>, NotFound<string>>> MarkOrderPaid(
@@ -258,7 +263,7 @@ public static class OrderEndpoints
         await db.SaveChangesAsync();
 
         var saved = await LoadFullOrderAsync(db, order.Number);
-        return TypedResults.Ok(ToDetailDto(saved!));
+        return TypedResults.Ok(await ToDetailDtoAsync(saved!, db));
     }
 
     private static Task<Order?> LoadFullOrderAsync(IBravaDbContext db, string number) =>
@@ -267,13 +272,25 @@ public static class OrderEndpoints
             .Include(o => o.Items)
             .FirstOrDefaultAsync(o => o.Number == number);
 
-    private static OrderDetailDto ToDetailDto(Order o) => new(
-        o.Id, o.Number, o.Status, o.PaymentStatus, o.PaymentMethod, o.PaidAt, o.CustomerId,
-        o.ContactName, o.ContactPhone, o.DeliveryAddress, o.DeliveryZoneId, o.DeliveryZone?.Name,
-        o.DeliveryFee, o.Subtotal, o.Total, o.Notes, o.CreatedAt,
-        o.Items.Select(i => new OrderItemDetailDto(
-            i.Id, i.ProductVariantId, i.ComboId, i.Description, i.UnitPrice, i.UnitCost, i.Quantity, i.LineTotal))
-            .ToList());
+    // Order.CreatedByAdminId is id-only (no nav property — see the domain
+    // comment), so the admin's email for display is a small separate lookup
+    // rather than an Include.
+    private static async Task<OrderDetailDto> ToDetailDtoAsync(Order o, IBravaDbContext db)
+    {
+        var adminEmail = await db.Admins
+            .Where(a => a.Id == o.CreatedByAdminId)
+            .Select(a => a.Email)
+            .FirstOrDefaultAsync();
+
+        return new OrderDetailDto(
+            o.Id, o.Number, o.Status, o.PaymentStatus, o.PaymentMethod, o.PaidAt, o.CustomerId,
+            o.ContactName, o.ContactPhone, o.DeliveryAddress, o.DeliveryZoneId, o.DeliveryZone?.Name,
+            o.DeliveryFee, o.Subtotal, o.Total, o.Notes, o.CreatedAt,
+            o.CreatedByAdminId, adminEmail,
+            o.Items.Select(i => new OrderItemDetailDto(
+                i.Id, i.ProductVariantId, i.ComboId, i.Description, i.UnitPrice, i.UnitCost, i.Quantity, i.LineTotal))
+                .ToList());
+    }
 
     // Active-only, mirroring VariantEndpoints' "can't activate without a sell
     // price" rule — an order line has to resolve to a real, sellable price.

@@ -1,10 +1,12 @@
 using System.Text;
 using System.Text.Json.Serialization;
+using Brava.Api.Modules.Admins;
 using Brava.Api.Modules.Auth;
 using Brava.Api.Modules.Brands;
 using Brava.Api.Modules.Categories;
 using Brava.Api.Modules.Combos;
 using Brava.Api.Modules.Delivery;
+using Brava.Api.Modules.Metrics;
 using Brava.Api.Modules.Orders;
 using Brava.Api.Modules.Products;
 using Brava.Api.Modules.Products.Images;
@@ -139,6 +141,8 @@ app.MapCategoryEndpoints();
 app.MapComboEndpoints();
 app.MapDeliveryZoneEndpoints();
 app.MapOrderEndpoints();
+app.MapAdminEndpoints();
+app.MapMetricsEndpoints();
 app.MapAuthEndpoints();
 
 app.Run();

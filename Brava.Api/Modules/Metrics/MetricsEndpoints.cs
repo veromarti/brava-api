@@ -1,0 +1,101 @@
+using Brava.Application;
+using Brava.Domain.Orders;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.EntityFrameworkCore;
+
+namespace Brava.Api.Modules.Metrics;
+
+public static class MetricsEndpoints
+{
+    public static IEndpointRouteBuilder MapMetricsEndpoints(this IEndpointRouteBuilder app)
+    {
+        app.MapGet("/api/metrics/catalogue", GetCatalogueMetrics).RequireAuthorization();
+        app.MapGet("/api/metrics/orders", GetOrderMetrics).RequireAuthorization();
+        return app;
+    }
+
+    // Always the current snapshot — no period filter, unlike order metrics.
+    // "Health" here means "would this hurt the storefront or the numbers",
+    // not a general product report: missing images, nothing sellable, no
+    // stock, or a cost gap that would silently break margin metrics.
+    private static async Task<Ok<CatalogueMetricsDto>> GetCatalogueMetrics(IBravaDbContext db)
+    {
+        var totalProducts = await db.Products.CountAsync();
+        var activeProducts = await db.Products.CountAsync(p => p.IsActive);
+        var productsWithoutImages = await db.Products.CountAsync(p => !p.Images.Any());
+        var productsWithoutSellableVariant = await db.Products
+            .CountAsync(p => !p.Variants.Any(v => v.IsActive && v.SellPrice != null));
+
+        var activeVariants = db.ProductVariants.Where(v => v.IsActive);
+        var totalActiveVariants = await activeVariants.CountAsync();
+        var outOfStockActiveVariants = await activeVariants
+            .CountAsync(v => v.PhysicalStock <= 0 && !v.AvailableOnDemand);
+        var variantsMissingCost = await activeVariants
+            .CountAsync(v => v.SellPrice != null && v.CostPrice == null);
+
+        // Materialized client-side — an average-of-ratios isn't SQL-translatable
+        // as cleanly, and the active/priced/costed set is small (a boutique
+        // catalogue, not a warehouse).
+        var margins = await activeVariants
+            .Where(v => v.SellPrice != null && v.SellPrice > 0 && v.CostPrice != null)
+            .Select(v => (v.SellPrice!.Value - v.CostPrice!.Value) / v.SellPrice!.Value)
+            .ToListAsync();
+        decimal? averageMarginPercent = margins.Count > 0 ? margins.Average() * 100m : null;
+
+        var totalCombos = await db.Combos.CountAsync();
+        var activeCombos = await db.Combos.CountAsync(c => c.IsActive);
+        var combosWithIncompleteCost = await db.Combos
+            .CountAsync(c => c.Items.Any(i => i.ProductVariant.CostPrice == null));
+
+        return TypedResults.Ok(new CatalogueMetricsDto(
+            totalProducts,
+            activeProducts,
+            totalProducts - activeProducts,
+            productsWithoutImages,
+            productsWithoutSellableVariant,
+            totalActiveVariants,
+            outOfStockActiveVariants,
+            variantsMissingCost,
+            averageMarginPercent,
+            totalCombos,
+            activeCombos,
+            combosWithIncompleteCost));
+    }
+
+    // "Completed" = Entregado, per the business call this metric is built on:
+    // Pendiente/Confirmado/EnPreparacion/EnCamino could still change or be
+    // cancelled, so only a delivered order counts as a real sale. `from`/`to`
+    // filter on CreatedAt; `to` is treated as inclusive of that whole day.
+    private static async Task<Ok<OrderMetricsDto>> GetOrderMetrics(IBravaDbContext db, DateTime? from, DateTime? to)
+    {
+        var query = db.Orders.Where(o => o.Status == OrderStatus.Entregado);
+        if (from is not null)
+        {
+            query = query.Where(o => o.CreatedAt >= from.Value);
+        }
+        if (to is not null)
+        {
+            query = query.Where(o => o.CreatedAt < to.Value.Date.AddDays(1));
+        }
+
+        var orders = await query
+            .Select(o => new
+            {
+                o.Subtotal,
+                o.DeliveryFee,
+                o.Total,
+                Items = o.Items.Select(i => new { i.UnitCost, i.Quantity }).ToList(),
+            })
+            .ToListAsync();
+
+        var revenue = orders.Sum(o => o.Subtotal);
+        var deliveryIncome = orders.Sum(o => o.DeliveryFee);
+        var totalIncome = orders.Sum(o => o.Total);
+        var hasIncompleteCost = orders.Any(o => o.Items.Any(i => i.UnitCost is null));
+        var cogs = orders.Sum(o => o.Items.Sum(i => (i.UnitCost ?? 0m) * i.Quantity));
+        var grossProfit = revenue - cogs;
+
+        return TypedResults.Ok(new OrderMetricsDto(
+            from, to, orders.Count, revenue, deliveryIncome, totalIncome, cogs, grossProfit, hasIncompleteCost));
+    }
+}
