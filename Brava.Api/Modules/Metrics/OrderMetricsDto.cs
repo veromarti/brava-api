@@ -17,7 +17,11 @@ public record OrderMetricsDto(
     /// <summary>Sum of UnitCost * Quantity across order items. A null UnitCost
     /// counts as 0 here — see HasIncompleteCost.</summary>
     decimal Cogs,
-    /// <summary>Revenue - Cogs. Only trustworthy when HasIncompleteCost is false.</summary>
+    /// <summary>Sum of PackagingCost — the bag/box used, an internal cost like
+    /// Cogs, never part of Revenue/TotalIncome.</summary>
+    decimal PackagingCost,
+    /// <summary>Revenue - Cogs - PackagingCost. Only trustworthy when
+    /// HasIncompleteCost is false.</summary>
     decimal GrossProfit,
     /// <summary>True if any counted order has a line item with no UnitCost —
     /// Cogs/GrossProfit are then a lower/upper bound, not exact.</summary>

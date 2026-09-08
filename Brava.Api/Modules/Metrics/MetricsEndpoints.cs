@@ -92,6 +92,7 @@ public static class MetricsEndpoints
                 o.Subtotal,
                 o.DeliveryFee,
                 o.Total,
+                o.PackagingCost,
                 Items = o.Items.Select(i => new { i.UnitCost, i.Quantity }).ToList(),
             })
             .ToListAsync();
@@ -99,11 +100,12 @@ public static class MetricsEndpoints
         var revenue = orders.Sum(o => o.Subtotal);
         var deliveryIncome = orders.Sum(o => o.DeliveryFee);
         var totalIncome = orders.Sum(o => o.Total);
+        var packagingCost = orders.Sum(o => o.PackagingCost);
         var hasIncompleteCost = orders.Any(o => o.Items.Any(i => i.UnitCost is null));
         var cogs = orders.Sum(o => o.Items.Sum(i => (i.UnitCost ?? 0m) * i.Quantity));
-        var grossProfit = revenue - cogs;
+        var grossProfit = revenue - cogs - packagingCost;
 
         return TypedResults.Ok(new OrderMetricsDto(
-            from, to, orders.Count, revenue, deliveryIncome, totalIncome, cogs, grossProfit, hasIncompleteCost));
+            from, to, orders.Count, revenue, deliveryIncome, totalIncome, cogs, packagingCost, grossProfit, hasIncompleteCost));
     }
 }

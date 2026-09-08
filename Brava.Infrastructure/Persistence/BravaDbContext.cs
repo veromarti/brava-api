@@ -6,6 +6,7 @@ using Brava.Domain.Combos;
 using Brava.Domain.Customers;
 using Brava.Domain.Delivery;
 using Brava.Domain.Orders;
+using Brava.Domain.Packaging;
 using Brava.Domain.Products;
 using Brava.Infrastructure.Persistence.Seeding;
 using Microsoft.EntityFrameworkCore;
@@ -23,6 +24,7 @@ public class BravaDbContext(DbContextOptions<BravaDbContext> options) : DbContex
     public DbSet<Combo> Combos => Set<Combo>();
     public DbSet<ComboItem> ComboItems => Set<ComboItem>();
     public DbSet<DeliveryZone> DeliveryZones => Set<DeliveryZone>();
+    public DbSet<PackagingOption> PackagingOptions => Set<PackagingOption>();
     public DbSet<Customer> Customers => Set<Customer>();
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
@@ -105,12 +107,16 @@ public class BravaDbContext(DbContextOptions<BravaDbContext> options) : DbContex
         modelBuilder.Entity<DeliveryZone>().Property(z => z.Price).HasPrecision(12, 2);
         modelBuilder.Entity<DeliveryZone>().HasData(DeliveryZoneSeedData.Zones);
 
+        modelBuilder.Entity<PackagingOption>().HasIndex(p => p.Name).IsUnique();
+        modelBuilder.Entity<PackagingOption>().Property(p => p.Price).HasPrecision(12, 2);
+
         modelBuilder.Entity<Customer>().HasIndex(c => c.Phone).IsUnique();
 
         modelBuilder.Entity<Order>().HasIndex(o => o.Number).IsUnique();
         modelBuilder.Entity<Order>().HasIndex(o => o.Sequence).IsUnique();
         modelBuilder.Entity<Order>().Property(o => o.Subtotal).HasPrecision(12, 2);
         modelBuilder.Entity<Order>().Property(o => o.DeliveryFee).HasPrecision(12, 2);
+        modelBuilder.Entity<Order>().Property(o => o.PackagingCost).HasPrecision(12, 2);
         modelBuilder.Entity<Order>().Property(o => o.Total).HasPrecision(12, 2);
 
         // SetNull everywhere the link is optional and the order already
@@ -126,6 +132,12 @@ public class BravaDbContext(DbContextOptions<BravaDbContext> options) : DbContex
             .HasOne(o => o.DeliveryZone)
             .WithMany()
             .HasForeignKey(o => o.DeliveryZoneId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        modelBuilder.Entity<Order>()
+            .HasOne(o => o.PackagingOption)
+            .WithMany()
+            .HasForeignKey(o => o.PackagingOptionId)
             .OnDelete(DeleteBehavior.SetNull);
 
         modelBuilder.Entity<OrderItem>().Property(i => i.UnitPrice).HasPrecision(12, 2);

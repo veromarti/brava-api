@@ -1,5 +1,6 @@
 using Brava.Domain.Customers;
 using Brava.Domain.Delivery;
+using Brava.Domain.Packaging;
 
 namespace Brava.Domain.Orders;
 
@@ -69,6 +70,17 @@ public class Order
 
     /// <summary>Snapshot of the zone's price at creation time.</summary>
     public decimal DeliveryFee { get; set; }
+
+    public Guid? PackagingOptionId { get; set; }
+
+    public PackagingOption? PackagingOption { get; set; }
+
+    /// <summary>
+    /// Snapshot of the packaging option's price at creation time. An internal
+    /// cost only — tracked for margin metrics, never added to Subtotal/Total
+    /// (unlike DeliveryFee, which the customer actually pays).
+    /// </summary>
+    public decimal PackagingCost { get; set; }
 
     /// <summary>Sum of the line totals.</summary>
     public decimal Subtotal { get; set; }

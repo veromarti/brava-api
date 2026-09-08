@@ -108,6 +108,17 @@ public static class OrderEndpoints
             deliveryFee = zone.Price;
         }
 
+        var packagingCost = 0m;
+        if (request.PackagingOptionId is not null)
+        {
+            var packaging = await db.PackagingOptions.FirstOrDefaultAsync(p => p.Id == request.PackagingOptionId);
+            if (packaging is null)
+            {
+                return TypedResults.NotFound($"Empaque '{request.PackagingOptionId}' no encontrado.");
+            }
+            packagingCost = packaging.Price;
+        }
+
         var variantIds = request.Items.Where(i => i.ProductVariantId is not null)
             .Select(i => i.ProductVariantId!.Value).Distinct().ToList();
         var comboIds = request.Items.Where(i => i.ComboId is not null)
@@ -214,6 +225,8 @@ public static class OrderEndpoints
             DeliveryAddress = deliveryAddress,
             DeliveryZoneId = request.DeliveryZoneId,
             DeliveryFee = deliveryFee,
+            PackagingOptionId = request.PackagingOptionId,
+            PackagingCost = packagingCost,
             Subtotal = subtotal,
             Total = subtotal + deliveryFee,
             Notes = request.Notes,
@@ -269,6 +282,7 @@ public static class OrderEndpoints
     private static Task<Order?> LoadFullOrderAsync(IBravaDbContext db, string number) =>
         db.Orders
             .Include(o => o.DeliveryZone)
+            .Include(o => o.PackagingOption)
             .Include(o => o.Items)
             .FirstOrDefaultAsync(o => o.Number == number);
 
@@ -285,7 +299,8 @@ public static class OrderEndpoints
         return new OrderDetailDto(
             o.Id, o.Number, o.Status, o.PaymentStatus, o.PaymentMethod, o.PaidAt, o.CustomerId,
             o.ContactName, o.ContactPhone, o.DeliveryAddress, o.DeliveryZoneId, o.DeliveryZone?.Name,
-            o.DeliveryFee, o.Subtotal, o.Total, o.Notes, o.CreatedAt,
+            o.DeliveryFee, o.PackagingOptionId, o.PackagingOption?.Name, o.PackagingCost,
+            o.Subtotal, o.Total, o.Notes, o.CreatedAt,
             o.CreatedByAdminId, adminEmail,
             o.Items.Select(i => new OrderItemDetailDto(
                 i.Id, i.ProductVariantId, i.ComboId, i.Description, i.UnitPrice, i.UnitCost, i.Quantity, i.LineTotal))
