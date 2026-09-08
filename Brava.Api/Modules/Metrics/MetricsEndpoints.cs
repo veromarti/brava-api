@@ -68,14 +68,22 @@ public static class MetricsEndpoints
     // filter on CreatedAt; `to` is treated as inclusive of that whole day.
     private static async Task<Ok<OrderMetricsDto>> GetOrderMetrics(IBravaDbContext db, DateTime? from, DateTime? to)
     {
+        // Model binding parses the query string with Kind=Unspecified, but
+        // CreatedAt is timestamptz (stored as UTC via DateTime.UtcNow) —
+        // Npgsql refuses to compare against an Unspecified-kind value.
+        // Treated as plain calendar-day boundaries in UTC, same simplicity
+        // as the rest of this single-timezone (Colombia) admin panel.
+        var fromUtc = from is null ? (DateTime?)null : DateTime.SpecifyKind(from.Value.Date, DateTimeKind.Utc);
+        var toUtc = to is null ? (DateTime?)null : DateTime.SpecifyKind(to.Value.Date, DateTimeKind.Utc);
+
         var query = db.Orders.Where(o => o.Status == OrderStatus.Entregado);
-        if (from is not null)
+        if (fromUtc is not null)
         {
-            query = query.Where(o => o.CreatedAt >= from.Value);
+            query = query.Where(o => o.CreatedAt >= fromUtc.Value);
         }
-        if (to is not null)
+        if (toUtc is not null)
         {
-            query = query.Where(o => o.CreatedAt < to.Value.Date.AddDays(1));
+            query = query.Where(o => o.CreatedAt < toUtc.Value.AddDays(1));
         }
 
         var orders = await query
