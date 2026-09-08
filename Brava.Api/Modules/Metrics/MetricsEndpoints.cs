@@ -66,7 +66,8 @@ public static class MetricsEndpoints
     // Pendiente/Confirmado/EnPreparacion/EnCamino could still change or be
     // cancelled, so only a delivered order counts as a real sale. `from`/`to`
     // filter on CreatedAt; `to` is treated as inclusive of that whole day.
-    private static async Task<Ok<OrderMetricsDto>> GetOrderMetrics(IBravaDbContext db, DateTime? from, DateTime? to)
+    private static async Task<Results<Ok<OrderMetricsDto>, BadRequest<string>>> GetOrderMetrics(
+        IBravaDbContext db, DateTime? from, DateTime? to)
     {
         // Model binding parses the query string with Kind=Unspecified, but
         // CreatedAt is timestamptz (stored as UTC via DateTime.UtcNow) —
@@ -75,6 +76,14 @@ public static class MetricsEndpoints
         // as the rest of this single-timezone (Colombia) admin panel.
         var fromUtc = from is null ? (DateTime?)null : DateTime.SpecifyKind(from.Value.Date, DateTimeKind.Utc);
         var toUtc = to is null ? (DateTime?)null : DateTime.SpecifyKind(to.Value.Date, DateTimeKind.Utc);
+
+        // Without this, a swapped from/to (a picker bug, or someone typing the
+        // range backwards) silently returns an all-zero report that reads as
+        // "no sales that period" instead of "invalid range".
+        if (fromUtc is not null && toUtc is not null && fromUtc > toUtc)
+        {
+            return TypedResults.BadRequest("'from' no puede ser posterior a 'to'.");
+        }
 
         var query = db.Orders.Where(o => o.Status == OrderStatus.Entregado);
         if (fromUtc is not null)
