@@ -10,6 +10,7 @@ public static class MetricsEndpoints
     public static IEndpointRouteBuilder MapMetricsEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapGet("/api/metrics/catalogue", GetCatalogueMetrics).RequireAuthorization();
+        app.MapGet("/api/metrics/catalogue/details", GetCatalogueHealthDetails).RequireAuthorization();
         app.MapGet("/api/metrics/orders", GetOrderMetrics).RequireAuthorization();
         return app;
     }
@@ -60,6 +61,48 @@ public static class MetricsEndpoints
             totalCombos,
             activeCombos,
             combosWithIncompleteCost));
+    }
+
+    // The rows behind GetCatalogueMetrics's four health counts — each Where
+    // clause mirrors the matching CountAsync above, so a card's list and its
+    // number always agree. Ordered by product name so the list reads like the
+    // products table. No paging: these are the *problem* rows, a short list by
+    // definition, and the whole point is to clear them to zero.
+    private static async Task<Ok<CatalogueHealthDetailsDto>> GetCatalogueHealthDetails(IBravaDbContext db)
+    {
+        var productsWithoutImages = await db.Products
+            .Where(p => !p.Images.Any())
+            .OrderBy(p => p.Name)
+            .Select(p => new ProductHealthItemDto(p.Id, p.Slug, p.Name))
+            .ToListAsync();
+
+        var productsWithoutSellableVariant = await db.Products
+            .Where(p => !p.Variants.Any(v => v.IsActive && v.SellPrice != null))
+            .OrderBy(p => p.Name)
+            .Select(p => new ProductHealthItemDto(p.Id, p.Slug, p.Name))
+            .ToListAsync();
+
+        var outOfStockActiveVariants = await db.ProductVariants
+            .Where(v => v.IsActive && v.PhysicalStock <= 0 && !v.AvailableOnDemand)
+            .OrderBy(v => v.Product.Name)
+            .Select(v => new VariantHealthItemDto(
+                v.Id, v.ProductId, v.Product.Slug, v.Product.Name,
+                v.ToneCode, v.ToneName, v.Units, v.VolumeMl, v.MassG, v.PhysicalStock))
+            .ToListAsync();
+
+        var variantsMissingCost = await db.ProductVariants
+            .Where(v => v.IsActive && v.SellPrice != null && v.CostPrice == null)
+            .OrderBy(v => v.Product.Name)
+            .Select(v => new VariantHealthItemDto(
+                v.Id, v.ProductId, v.Product.Slug, v.Product.Name,
+                v.ToneCode, v.ToneName, v.Units, v.VolumeMl, v.MassG, v.PhysicalStock))
+            .ToListAsync();
+
+        return TypedResults.Ok(new CatalogueHealthDetailsDto(
+            productsWithoutImages,
+            productsWithoutSellableVariant,
+            outOfStockActiveVariants,
+            variantsMissingCost));
     }
 
     // "Completed" = Entregado, per the business call this metric is built on:
