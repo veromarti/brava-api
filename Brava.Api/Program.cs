@@ -12,6 +12,7 @@ using Brava.Api.Modules.Packaging;
 using Brava.Api.Modules.Products;
 using Brava.Api.Modules.Products.Images;
 using Brava.Api.Modules.Products.Variants;
+using Brava.Api.Modules.Wishlists;
 using Brava.Application;
 using Brava.Domain.Admins;
 using Brava.Infrastructure.Persistence;
@@ -145,6 +146,7 @@ app.MapPackagingEndpoints();
 app.MapOrderEndpoints();
 app.MapAdminEndpoints();
 app.MapMetricsEndpoints();
+app.MapWishlistEndpoints();
 app.MapAuthEndpoints();
 
 app.Run();

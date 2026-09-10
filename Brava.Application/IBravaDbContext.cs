@@ -7,6 +7,7 @@ using Brava.Domain.Delivery;
 using Brava.Domain.Orders;
 using Brava.Domain.Packaging;
 using Brava.Domain.Products;
+using Brava.Domain.Wishlists;
 using Microsoft.EntityFrameworkCore;
 
 namespace Brava.Application;
@@ -32,6 +33,8 @@ public interface IBravaDbContext
     DbSet<Customer> Customers { get; }
     DbSet<Order> Orders { get; }
     DbSet<OrderItem> OrderItems { get; }
+    DbSet<Wishlist> Wishlists { get; }
+    DbSet<WishlistItem> WishlistItems { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

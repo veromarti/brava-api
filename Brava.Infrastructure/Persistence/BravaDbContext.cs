@@ -8,6 +8,7 @@ using Brava.Domain.Delivery;
 using Brava.Domain.Orders;
 using Brava.Domain.Packaging;
 using Brava.Domain.Products;
+using Brava.Domain.Wishlists;
 using Brava.Infrastructure.Persistence.Seeding;
 using Microsoft.EntityFrameworkCore;
 
@@ -28,6 +29,8 @@ public class BravaDbContext(DbContextOptions<BravaDbContext> options) : DbContex
     public DbSet<Customer> Customers => Set<Customer>();
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
+    public DbSet<Wishlist> Wishlists => Set<Wishlist>();
+    public DbSet<WishlistItem> WishlistItems => Set<WishlistItem>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -161,5 +164,20 @@ public class BravaDbContext(DbContextOptions<BravaDbContext> options) : DbContex
             .WithMany()
             .HasForeignKey(i => i.ComboId)
             .OnDelete(DeleteBehavior.SetNull);
+
+        // --- Wishlists (shareable gift lists) --------------------------------
+
+        // Case-sensitive lookup key handed out in share links; must be unique.
+        modelBuilder.Entity<Wishlist>().HasIndex(w => w.Code).IsUnique();
+
+        modelBuilder.Entity<WishlistItem>().Property(i => i.UnitPrice).HasPrecision(12, 2);
+
+        // Cascade: the list owns its lines outright (unlike an order, there's
+        // nothing to preserve for history once the list is gone).
+        modelBuilder.Entity<WishlistItem>()
+            .HasOne(i => i.Wishlist)
+            .WithMany(w => w.Items)
+            .HasForeignKey(i => i.WishlistId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 }
