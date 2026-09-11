@@ -10,14 +10,23 @@ namespace Brava.Api.Modules.Orders;
 
 public static class OrderEndpoints
 {
+    // CreateStorefrontOrder is anonymous, so these bound how much damage a
+    // bad/abusive payload can do — same reasoning as WishlistEndpoints.
+    private const int MaxStorefrontItems = 50;
+    private const int MaxContactFieldLength = 200;
+    private const int MaxNotesLength = 1000;
+
     public static IEndpointRouteBuilder MapOrderEndpoints(this IEndpointRouteBuilder app)
     {
-        // Admin-only — there's no customer-facing order flow yet (that's Phase 4).
+        // Admin-only — the panel's own order entry.
         app.MapGet("/api/orders", GetOrders).RequireAuthorization();
         app.MapGet("/api/orders/{number}", GetOrderByNumber).RequireAuthorization();
         app.MapPost("/api/orders", CreateOrder).RequireAuthorization();
         app.MapPut("/api/orders/{number}/status", UpdateOrderStatus).RequireAuthorization();
         app.MapPut("/api/orders/{number}/payment", MarkOrderPaid).RequireAuthorization();
+        app.MapPut("/api/orders/{number}/admin", AssignOrderAdmin).RequireAuthorization();
+        // Anonymous — a customer hitting "Pedir por WhatsApp" on the storefront.
+        app.MapPost("/api/orders/storefront", CreateStorefrontOrder);
         return app;
     }
 
@@ -72,23 +81,10 @@ public static class OrderEndpoints
             return TypedResults.BadRequest("Nombre, teléfono y dirección son obligatorios.");
         }
 
-        if (request.Items.Count == 0)
+        var itemsShapeError = ValidateItemRequests(request.Items);
+        if (itemsShapeError is not null)
         {
-            return TypedResults.BadRequest("El pedido necesita al menos un producto.");
-        }
-
-        foreach (var item in request.Items)
-        {
-            var hasVariant = item.ProductVariantId is not null;
-            var hasCombo = item.ComboId is not null;
-            if (hasVariant == hasCombo)
-            {
-                return TypedResults.BadRequest("Cada línea debe tener exactamente un producto o un kit.");
-            }
-            if (item.Quantity < 1)
-            {
-                return TypedResults.BadRequest("La cantidad debe ser al menos 1.");
-            }
+            return TypedResults.BadRequest(itemsShapeError);
         }
 
         var admin = await db.Admins.FirstOrDefaultAsync(a => a.Id == request.CreatedByAdminId && a.IsActive);
@@ -119,103 +115,22 @@ public static class OrderEndpoints
             packagingCost = packaging.Price;
         }
 
-        var variantIds = request.Items.Where(i => i.ProductVariantId is not null)
-            .Select(i => i.ProductVariantId!.Value).Distinct().ToList();
-        var comboIds = request.Items.Where(i => i.ComboId is not null)
-            .Select(i => i.ComboId!.Value).Distinct().ToList();
-
-        var variants = await db.ProductVariants
-            .Include(v => v.Product)
-            .Where(v => variantIds.Contains(v.Id))
-            .ToDictionaryAsync(v => v.Id);
-        var combos = await db.Combos
-            .Include(c => c.Items).ThenInclude(i => i.ProductVariant)
-            .Where(c => comboIds.Contains(c.Id))
-            .ToDictionaryAsync(c => c.Id);
-
-        var missingVariant = variantIds.FirstOrDefault(id => !variants.ContainsKey(id));
-        if (missingVariant != Guid.Empty)
-        {
-            return TypedResults.NotFound($"Producto '{missingVariant}' no encontrado.");
-        }
-        var missingCombo = comboIds.FirstOrDefault(id => !combos.ContainsKey(id));
-        if (missingCombo != Guid.Empty)
-        {
-            return TypedResults.NotFound($"Kit '{missingCombo}' no encontrado.");
-        }
-
-        // Generated up front so OrderItem.OrderId (required) can be set in each
-        // item's own initializer instead of patched in after construction.
         var orderId = Guid.NewGuid();
-        var orderItems = new List<OrderItem>();
-        foreach (var item in request.Items)
+        var (orderItems, itemsError) = await BuildOrderItemsAsync(request.Items, orderId, db);
+        if (itemsError is not null)
         {
-            if (item.ProductVariantId is { } variantId)
-            {
-                var variant = variants[variantId];
-                var error = VariantPricingError(variant);
-                if (error is not null)
-                {
-                    return TypedResults.BadRequest(error);
-                }
-
-                orderItems.Add(new OrderItem
-                {
-                    OrderId = orderId,
-                    ProductVariantId = variant.Id,
-                    Description = VariantDescription(variant),
-                    UnitPrice = variant.SellPrice!.Value,
-                    UnitCost = variant.CostPrice,
-                    Quantity = item.Quantity,
-                    LineTotal = variant.SellPrice.Value * item.Quantity,
-                });
-            }
-            else
-            {
-                var combo = combos[item.ComboId!.Value];
-                var error = ComboPricingError(combo);
-                if (error is not null)
-                {
-                    return TypedResults.BadRequest(error);
-                }
-
-                var (unitPrice, unitCost) = ComboPricing(combo);
-                orderItems.Add(new OrderItem
-                {
-                    OrderId = orderId,
-                    ComboId = combo.Id,
-                    Description = combo.Name,
-                    UnitPrice = unitPrice,
-                    UnitCost = unitCost,
-                    Quantity = item.Quantity,
-                    LineTotal = unitPrice * item.Quantity,
-                });
-            }
+            return TypedResults.BadRequest(itemsError);
         }
 
-        var customer = await db.Customers.FirstOrDefaultAsync(c => c.Phone == contactPhone);
+        var customer = await FindOrCreateCustomerAsync(db, contactName, contactPhone);
+        var subtotal = orderItems!.Sum(i => i.LineTotal);
+        var sequence = await NextOrderSequenceAsync(db);
         var now = DateTime.UtcNow;
-        if (customer is null)
-        {
-            customer = new Customer
-            {
-                Id = Guid.NewGuid(),
-                Name = contactName,
-                Phone = contactPhone,
-                CreatedAt = now,
-                UpdatedAt = now,
-            };
-            db.Customers.Add(customer);
-        }
-
-        var subtotal = orderItems.Sum(i => i.LineTotal);
-        var maxSequence = await db.Orders.MaxAsync(o => (int?)o.Sequence) ?? 0;
-        var sequence = maxSequence + 1;
 
         var order = new Order
         {
             Id = orderId,
-            Number = $"BRA-{sequence:D4}",
+            Number = FormatOrderNumber(sequence),
             Sequence = sequence,
             Status = OrderStatus.Pendiente,
             PaymentStatus = PaymentStatus.Pendiente,
@@ -234,13 +149,98 @@ public static class OrderEndpoints
             CreatedAt = now,
             UpdatedAt = now,
         };
-        order.Items = orderItems;
+        order.Items = orderItems!;
 
         db.Orders.Add(order);
         await db.SaveChangesAsync();
 
         var saved = await LoadFullOrderAsync(db, order.Number);
         return TypedResults.Created($"/api/orders/{order.Number}", await ToDetailDtoAsync(saved!, db));
+    }
+
+    // The storefront's "Pedir por WhatsApp": the customer supplies their own
+    // contact details and orders exactly what's in front of them (one
+    // product/kit, or their whole wishlist). No admin, delivery zone or
+    // packaging choice here — an admin fills those in from the panel once
+    // they follow up over WhatsApp. Same Pendiente/Pendiente starting state
+    // as an admin-entered order.
+    private static async Task<Results<Created<CreateStorefrontOrderResponse>, BadRequest<string>>> CreateStorefrontOrder(
+        CreateStorefrontOrderRequest request, IBravaDbContext db)
+    {
+        var contactName = (request.ContactName ?? string.Empty).Trim();
+        var contactPhone = (request.ContactPhone ?? string.Empty).Trim();
+        var deliveryAddress = (request.DeliveryAddress ?? string.Empty).Trim();
+        if (contactName.Length == 0 || contactPhone.Length == 0 || deliveryAddress.Length == 0)
+        {
+            return TypedResults.BadRequest("Nombre, teléfono y dirección son obligatorios.");
+        }
+        if (contactName.Length > MaxContactFieldLength || contactPhone.Length > MaxContactFieldLength
+            || deliveryAddress.Length > MaxContactFieldLength)
+        {
+            return TypedResults.BadRequest("Alguno de los datos de contacto es demasiado largo.");
+        }
+
+        var notes = string.IsNullOrWhiteSpace(request.Notes) ? null : request.Notes.Trim();
+        if (notes is { Length: > MaxNotesLength })
+        {
+            return TypedResults.BadRequest($"La nota no puede superar {MaxNotesLength} caracteres.");
+        }
+
+        if (request.Items is null || request.Items.Count == 0)
+        {
+            return TypedResults.BadRequest("El pedido necesita al menos un producto.");
+        }
+        if (request.Items.Count > MaxStorefrontItems)
+        {
+            return TypedResults.BadRequest($"El pedido no puede tener más de {MaxStorefrontItems} productos.");
+        }
+        var itemsShapeError = ValidateItemRequests(request.Items);
+        if (itemsShapeError is not null)
+        {
+            return TypedResults.BadRequest(itemsShapeError);
+        }
+
+        var orderId = Guid.NewGuid();
+        var (orderItems, itemsError) = await BuildOrderItemsAsync(request.Items, orderId, db);
+        if (itemsError is not null)
+        {
+            return TypedResults.BadRequest(itemsError);
+        }
+
+        var customer = await FindOrCreateCustomerAsync(db, contactName, contactPhone);
+        var subtotal = orderItems!.Sum(i => i.LineTotal);
+        var sequence = await NextOrderSequenceAsync(db);
+        var now = DateTime.UtcNow;
+
+        var order = new Order
+        {
+            Id = orderId,
+            Number = FormatOrderNumber(sequence),
+            Sequence = sequence,
+            Status = OrderStatus.Pendiente,
+            PaymentStatus = PaymentStatus.Pendiente,
+            CustomerId = customer.Id,
+            ContactName = contactName,
+            ContactPhone = contactPhone,
+            DeliveryAddress = deliveryAddress,
+            DeliveryZoneId = null,
+            DeliveryFee = 0m,
+            PackagingOptionId = null,
+            PackagingCost = 0m,
+            Subtotal = subtotal,
+            Total = subtotal,
+            Notes = notes,
+            CreatedByAdminId = null,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        order.Items = orderItems!;
+
+        db.Orders.Add(order);
+        await db.SaveChangesAsync();
+
+        return TypedResults.Created(
+            $"/api/orders/{order.Number}", new CreateStorefrontOrderResponse(order.Number, order.Total));
     }
 
     private static async Task<Results<Ok<OrderDetailDto>, NotFound<string>>> UpdateOrderStatus(
@@ -279,6 +279,31 @@ public static class OrderEndpoints
         return TypedResults.Ok(await ToDetailDtoAsync(saved!, db));
     }
 
+    // Lets an admin claim/reassign a customer-created order once they follow
+    // up — the only way CreatedByAdminId gets set on one of those.
+    private static async Task<Results<Ok<OrderDetailDto>, NotFound<string>>> AssignOrderAdmin(
+        string number, AssignOrderAdminRequest request, IBravaDbContext db)
+    {
+        var order = await db.Orders.FirstOrDefaultAsync(o => o.Number == number);
+        if (order is null)
+        {
+            return TypedResults.NotFound($"Order '{number}' not found.");
+        }
+
+        var admin = await db.Admins.FirstOrDefaultAsync(a => a.Id == request.AdminId && a.IsActive);
+        if (admin is null)
+        {
+            return TypedResults.NotFound($"Admin '{request.AdminId}' no encontrado o inactivo.");
+        }
+
+        order.CreatedByAdminId = admin.Id;
+        order.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+
+        var saved = await LoadFullOrderAsync(db, order.Number);
+        return TypedResults.Ok(await ToDetailDtoAsync(saved!, db));
+    }
+
     private static Task<Order?> LoadFullOrderAsync(IBravaDbContext db, string number) =>
         db.Orders
             .Include(o => o.DeliveryZone)
@@ -288,13 +313,13 @@ public static class OrderEndpoints
 
     // Order.CreatedByAdminId is id-only (no nav property — see the domain
     // comment), so the admin's email for display is a small separate lookup
-    // rather than an Include.
+    // rather than an Include. Skipped entirely when null (customer-created,
+    // not yet claimed) rather than querying for a match that can't exist.
     private static async Task<OrderDetailDto> ToDetailDtoAsync(Order o, IBravaDbContext db)
     {
-        var adminEmail = await db.Admins
-            .Where(a => a.Id == o.CreatedByAdminId)
-            .Select(a => a.Email)
-            .FirstOrDefaultAsync();
+        var adminEmail = o.CreatedByAdminId is { } adminId
+            ? await db.Admins.Where(a => a.Id == adminId).Select(a => a.Email).FirstOrDefaultAsync()
+            : null;
 
         return new OrderDetailDto(
             o.Id, o.Number, o.Status, o.PaymentStatus, o.PaymentMethod, o.PaidAt, o.CustomerId,
@@ -306,6 +331,144 @@ public static class OrderEndpoints
                 i.Id, i.ProductVariantId, i.ComboId, i.Description, i.UnitPrice, i.UnitCost, i.Quantity, i.LineTotal))
                 .ToList());
     }
+
+    // --- shared by CreateOrder and CreateStorefrontOrder ---------------------
+
+    private static string? ValidateItemRequests(List<CreateOrderItemRequest>? items)
+    {
+        if (items is null || items.Count == 0)
+        {
+            return "El pedido necesita al menos un producto.";
+        }
+        foreach (var item in items)
+        {
+            var hasVariant = item.ProductVariantId is not null;
+            var hasCombo = item.ComboId is not null;
+            if (hasVariant == hasCombo)
+            {
+                return "Cada línea debe tener exactamente un producto o un kit.";
+            }
+            if (item.Quantity < 1)
+            {
+                return "La cantidad debe ser al menos 1.";
+            }
+        }
+        return null;
+    }
+
+    // Loads the referenced variants/combos, validates each is sellable, and
+    // builds the snapshot OrderItems (description/price/cost) — the one place
+    // both create endpoints price a line, so they can never disagree.
+    private static async Task<(List<OrderItem>? Items, string? Error)> BuildOrderItemsAsync(
+        List<CreateOrderItemRequest> requestItems, Guid orderId, IBravaDbContext db)
+    {
+        var variantIds = requestItems.Where(i => i.ProductVariantId is not null)
+            .Select(i => i.ProductVariantId!.Value).Distinct().ToList();
+        var comboIds = requestItems.Where(i => i.ComboId is not null)
+            .Select(i => i.ComboId!.Value).Distinct().ToList();
+
+        var variants = await db.ProductVariants
+            .Include(v => v.Product)
+            .Where(v => variantIds.Contains(v.Id))
+            .ToDictionaryAsync(v => v.Id);
+        var combos = await db.Combos
+            .Include(c => c.Items).ThenInclude(i => i.ProductVariant)
+            .Where(c => comboIds.Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id);
+
+        // Note: not `variantIds.FirstOrDefault(id => !variants.ContainsKey(id)) != Guid.Empty`
+        // — FirstOrDefault's "nothing matched" sentinel IS Guid.Empty, so that
+        // reads as "no missing variant" even when Guid.Empty is the actual
+        // missing id (a garbage/anonymous request can easily send it), and
+        // falls through to a dictionary lookup that throws instead of 400ing.
+        var missingVariantId = variantIds.Where(id => !variants.ContainsKey(id)).Cast<Guid?>().FirstOrDefault();
+        if (missingVariantId is not null)
+        {
+            return (null, $"Producto '{missingVariantId}' no encontrado.");
+        }
+        var missingComboId = comboIds.Where(id => !combos.ContainsKey(id)).Cast<Guid?>().FirstOrDefault();
+        if (missingComboId is not null)
+        {
+            return (null, $"Kit '{missingComboId}' no encontrado.");
+        }
+
+        var orderItems = new List<OrderItem>();
+        foreach (var item in requestItems)
+        {
+            if (item.ProductVariantId is { } variantId)
+            {
+                var variant = variants[variantId];
+                var error = VariantPricingError(variant);
+                if (error is not null)
+                {
+                    return (null, error);
+                }
+
+                orderItems.Add(new OrderItem
+                {
+                    OrderId = orderId,
+                    ProductVariantId = variant.Id,
+                    Description = VariantDescription(variant),
+                    UnitPrice = variant.SellPrice!.Value,
+                    UnitCost = variant.CostPrice,
+                    Quantity = item.Quantity,
+                    LineTotal = variant.SellPrice.Value * item.Quantity,
+                });
+            }
+            else
+            {
+                var combo = combos[item.ComboId!.Value];
+                var error = ComboPricingError(combo);
+                if (error is not null)
+                {
+                    return (null, error);
+                }
+
+                var (unitPrice, unitCost) = ComboPricing(combo);
+                orderItems.Add(new OrderItem
+                {
+                    OrderId = orderId,
+                    ComboId = combo.Id,
+                    Description = combo.Name,
+                    UnitPrice = unitPrice,
+                    UnitCost = unitCost,
+                    Quantity = item.Quantity,
+                    LineTotal = unitPrice * item.Quantity,
+                });
+            }
+        }
+
+        return (orderItems, null);
+    }
+
+    private static async Task<Customer> FindOrCreateCustomerAsync(IBravaDbContext db, string name, string phone)
+    {
+        var customer = await db.Customers.FirstOrDefaultAsync(c => c.Phone == phone);
+        if (customer is not null)
+        {
+            return customer;
+        }
+
+        var now = DateTime.UtcNow;
+        customer = new Customer
+        {
+            Id = Guid.NewGuid(),
+            Name = name,
+            Phone = phone,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        db.Customers.Add(customer);
+        return customer;
+    }
+
+    private static async Task<int> NextOrderSequenceAsync(IBravaDbContext db)
+    {
+        var maxSequence = await db.Orders.MaxAsync(o => (int?)o.Sequence) ?? 0;
+        return maxSequence + 1;
+    }
+
+    private static string FormatOrderNumber(int sequence) => $"BRA-{sequence:D4}";
 
     // Active-only, mirroring VariantEndpoints' "can't activate without a sell
     // price" rule — an order line has to resolve to a real, sellable price.

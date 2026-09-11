@@ -27,11 +27,12 @@ public enum PaymentMethod
 }
 
 /// <summary>
-/// A sale. Created by an admin in the panel (v1 — the customer-facing flow is
-/// still WhatsApp). Contact and delivery details are snapshotted so a guest
-/// order stands alone and an account order isn't rewritten when the customer
-/// later edits their profile. Money fields are whole COP stored as numeric(12,2)
-/// for consistency with the rest of the schema.
+/// A sale. Created either by an admin in the panel, or by the customer
+/// themselves from the storefront's "Pedir por WhatsApp" (CreatedByAdminId
+/// null in that case — see its own doc comment). Contact and delivery details
+/// are snapshotted so a guest order stands alone and an account order isn't
+/// rewritten when the customer later edits their profile. Money fields are
+/// whole COP stored as numeric(12,2) for consistency with the rest of the schema.
 /// </summary>
 public class Order
 {
@@ -90,8 +91,12 @@ public class Order
 
     public string? Notes { get; set; }
 
-    /// <summary>Which admin created the order (id only — no nav needed yet).</summary>
-    public Guid CreatedByAdminId { get; set; }
+    /// <summary>
+    /// Which admin created the order (id only — no nav needed yet). Null for
+    /// an order the customer created themselves from the storefront ("Pedir
+    /// por WhatsApp") — an admin can claim it later via PUT .../admin.
+    /// </summary>
+    public Guid? CreatedByAdminId { get; set; }
 
     public DateTime CreatedAt { get; set; }
 

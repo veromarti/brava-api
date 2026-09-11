@@ -23,7 +23,10 @@ public record OrderDetailDto(
     decimal Total,
     string? Notes,
     DateTime CreatedAt,
-    Guid CreatedByAdminId,
+    // Null when the customer created this order themselves from the
+    // storefront — CreatedByAdminEmail is null too until an admin claims it
+    // via PUT /api/orders/{number}/admin.
+    Guid? CreatedByAdminId,
     string? CreatedByAdminEmail,
     List<OrderItemDetailDto> Items);
 
