@@ -22,6 +22,7 @@ public static class OrderEndpoints
         app.MapGet("/api/orders", GetOrders).RequireAuthorization();
         app.MapGet("/api/orders/{number}", GetOrderByNumber).RequireAuthorization();
         app.MapPost("/api/orders", CreateOrder).RequireAuthorization();
+        app.MapPut("/api/orders/{number}", UpdateOrder).RequireAuthorization();
         app.MapPut("/api/orders/{number}/status", UpdateOrderStatus).RequireAuthorization();
         app.MapPut("/api/orders/{number}/payment", MarkOrderPaid).RequireAuthorization();
         app.MapPut("/api/orders/{number}/admin", AssignOrderAdmin).RequireAuthorization();
@@ -93,26 +94,16 @@ public static class OrderEndpoints
             return TypedResults.NotFound($"Admin '{request.CreatedByAdminId}' no encontrado o inactivo.");
         }
 
-        var deliveryFee = 0m;
-        if (request.DeliveryZoneId is not null)
+        var (deliveryFee, zoneError) = await ResolveDeliveryFeeAsync(request.DeliveryZoneId, db);
+        if (zoneError is not null)
         {
-            var zone = await db.DeliveryZones.FirstOrDefaultAsync(z => z.Id == request.DeliveryZoneId);
-            if (zone is null)
-            {
-                return TypedResults.NotFound($"Zona de envío '{request.DeliveryZoneId}' no encontrada.");
-            }
-            deliveryFee = zone.Price;
+            return TypedResults.NotFound(zoneError);
         }
 
-        var packagingCost = 0m;
-        if (request.PackagingOptionId is not null)
+        var (packagingCost, packagingError) = await ResolvePackagingCostAsync(request.PackagingOptionId, db);
+        if (packagingError is not null)
         {
-            var packaging = await db.PackagingOptions.FirstOrDefaultAsync(p => p.Id == request.PackagingOptionId);
-            if (packaging is null)
-            {
-                return TypedResults.NotFound($"Empaque '{request.PackagingOptionId}' no encontrado.");
-            }
-            packagingCost = packaging.Price;
+            return TypedResults.NotFound(packagingError);
         }
 
         var orderId = Guid.NewGuid();
@@ -156,6 +147,88 @@ public static class OrderEndpoints
 
         var saved = await LoadFullOrderAsync(db, order.Number);
         return TypedResults.Created($"/api/orders/{order.Number}", await ToDetailDtoAsync(saved!, db));
+    }
+
+    // "Editar pedido": an admin can add/remove products, fix the contact
+    // details, or pick a delivery zone/packaging once they've followed up
+    // with the customer over WhatsApp (a storefront order starts with none
+    // of those set — see CreateStorefrontOrder). Full replace of the
+    // editable fields, same shape as CreateOrderRequest minus
+    // CreatedByAdminId (that's PUT .../admin's job) and Status/PaymentStatus
+    // (their own controls). Blocked once the order is Entregado or
+    // Cancelado — financial metrics already count a delivered order, and
+    // editing its items would silently rewrite that history.
+    private static async Task<Results<Ok<OrderDetailDto>, NotFound<string>, BadRequest<string>>> UpdateOrder(
+        string number, UpdateOrderRequest request, IBravaDbContext db)
+    {
+        var order = await db.Orders.Include(o => o.Items).FirstOrDefaultAsync(o => o.Number == number);
+        if (order is null)
+        {
+            return TypedResults.NotFound($"Order '{number}' not found.");
+        }
+        if (order.Status is OrderStatus.Entregado or OrderStatus.Cancelado)
+        {
+            return TypedResults.BadRequest("No se puede editar un pedido entregado o cancelado.");
+        }
+
+        var contactName = request.ContactName.Trim();
+        var contactPhone = request.ContactPhone.Trim();
+        var deliveryAddress = request.DeliveryAddress.Trim();
+        if (contactName.Length == 0 || contactPhone.Length == 0 || deliveryAddress.Length == 0)
+        {
+            return TypedResults.BadRequest("Nombre, teléfono y dirección son obligatorios.");
+        }
+
+        var itemsShapeError = ValidateItemRequests(request.Items);
+        if (itemsShapeError is not null)
+        {
+            return TypedResults.BadRequest(itemsShapeError);
+        }
+
+        var (deliveryFee, zoneError) = await ResolveDeliveryFeeAsync(request.DeliveryZoneId, db);
+        if (zoneError is not null)
+        {
+            return TypedResults.NotFound(zoneError);
+        }
+
+        var (packagingCost, packagingError) = await ResolvePackagingCostAsync(request.PackagingOptionId, db);
+        if (packagingError is not null)
+        {
+            return TypedResults.NotFound(packagingError);
+        }
+
+        var (orderItems, itemsError) = await BuildOrderItemsAsync(request.Items, order.Id, db);
+        if (itemsError is not null)
+        {
+            return TypedResults.BadRequest(itemsError);
+        }
+
+        order.ContactName = contactName;
+        order.ContactPhone = contactPhone;
+        order.DeliveryAddress = deliveryAddress;
+        order.DeliveryZoneId = request.DeliveryZoneId;
+        order.DeliveryFee = deliveryFee;
+        order.PackagingOptionId = request.PackagingOptionId;
+        order.PackagingCost = packagingCost;
+        order.Notes = request.Notes;
+
+        // Replace the lines wholesale. AddRange (not `order.Items = orderItems`)
+        // so EF tracks them as Added regardless of key value — same pitfall
+        // WishlistEndpoints.UpdateWishlist hit: assigning the navigation makes
+        // DetectChanges treat a row with a pre-set (but never-inserted) Id as
+        // Modified and emit a doomed UPDATE.
+        db.OrderItems.RemoveRange(order.Items);
+        db.OrderItems.AddRange(orderItems!);
+
+        var subtotal = orderItems!.Sum(i => i.LineTotal);
+        order.Subtotal = subtotal;
+        order.Total = subtotal + deliveryFee;
+        order.UpdatedAt = DateTime.UtcNow;
+
+        await db.SaveChangesAsync();
+
+        var saved = await LoadFullOrderAsync(db, order.Number);
+        return TypedResults.Ok(await ToDetailDtoAsync(saved!, db));
     }
 
     // The storefront's "Pedir por WhatsApp": the customer supplies their own
@@ -332,7 +405,27 @@ public static class OrderEndpoints
                 .ToList());
     }
 
-    // --- shared by CreateOrder and CreateStorefrontOrder ---------------------
+    // --- shared by CreateOrder, CreateStorefrontOrder and UpdateOrder --------
+
+    private static async Task<(decimal Fee, string? Error)> ResolveDeliveryFeeAsync(Guid? zoneId, IBravaDbContext db)
+    {
+        if (zoneId is null)
+        {
+            return (0m, null);
+        }
+        var zone = await db.DeliveryZones.FirstOrDefaultAsync(z => z.Id == zoneId);
+        return zone is null ? (0m, $"Zona de envío '{zoneId}' no encontrada.") : (zone.Price, null);
+    }
+
+    private static async Task<(decimal Cost, string? Error)> ResolvePackagingCostAsync(Guid? packagingOptionId, IBravaDbContext db)
+    {
+        if (packagingOptionId is null)
+        {
+            return (0m, null);
+        }
+        var packaging = await db.PackagingOptions.FirstOrDefaultAsync(p => p.Id == packagingOptionId);
+        return packaging is null ? (0m, $"Empaque '{packagingOptionId}' no encontrado.") : (packaging.Price, null);
+    }
 
     private static string? ValidateItemRequests(List<CreateOrderItemRequest>? items)
     {
