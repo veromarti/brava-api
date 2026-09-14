@@ -36,4 +36,15 @@ public class WishlistItem
 
     /// <summary>Unit price as shown when the line was added, in whole COP.</summary>
     public decimal UnitPrice { get; set; }
+
+    /// <summary>
+    /// Set once someone completes a "Regalar esto"/"Regalar todo" order for
+    /// this line from the shared gift page, so a later visitor sees it's
+    /// already taken instead of ordering it again. Best-effort — nothing here
+    /// cryptographically ties it to the order that was actually placed, same
+    /// trust level as the rest of this no-account storefront.
+    /// </summary>
+    public bool IsGifted { get; set; }
+
+    public DateTime? GiftedAt { get; set; }
 }

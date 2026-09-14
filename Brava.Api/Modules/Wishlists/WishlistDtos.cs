@@ -20,6 +20,7 @@ public record SaveWishlistRequest(
     List<WishlistItemPayload> Items);
 
 public record WishlistItemDto(
+    Guid Id,
     string Type,
     string Slug,
     Guid? VariantId,
@@ -27,7 +28,8 @@ public record WishlistItemDto(
     string? VariantLabel,
     string? ImageUrl,
     decimal UnitPrice,
-    int Quantity);
+    int Quantity,
+    bool IsGifted);
 
 public record WishlistDto(
     string Code,
@@ -38,3 +40,11 @@ public record WishlistDto(
     List<WishlistItemDto> Items);
 
 public record CreateWishlistResponse(string Code);
+
+/// <summary>
+/// Marks one or more of this wishlist's lines as already gifted — sent by the
+/// shared gift page right after a "Regalar esto"/"Regalar todo" order is
+/// created, so a later visitor sees them as taken. Ids outside this wishlist
+/// are silently ignored rather than erroring the whole batch.
+/// </summary>
+public record MarkItemsGiftedRequest(List<Guid> ItemIds);

@@ -24,6 +24,7 @@ public static class WishlistEndpoints
         app.MapPost("/api/wishlists", CreateWishlist);
         app.MapGet("/api/wishlists/{code}", GetWishlist);
         app.MapPut("/api/wishlists/{code}", UpdateWishlist);
+        app.MapPut("/api/wishlists/{code}/gift", MarkItemsGifted);
         return app;
     }
 
@@ -128,6 +129,35 @@ public static class WishlistEndpoints
         return TypedResults.Ok(ToDto(wishlist));
     }
 
+    // Anonymous, like the rest of this module — called by the gift page right
+    // after WhatsAppOrderButton creates a real order for one or more lines.
+    // Not tied to that order in any verifiable way (no auth exists here to
+    // tie it to); a no-op for ids that don't belong to this wishlist or
+    // don't exist, rather than erroring the whole batch over one bad id.
+    private static async Task<Results<Ok<WishlistDto>, NotFound<string>>> MarkItemsGifted(
+        string code, MarkItemsGiftedRequest request, IBravaDbContext db)
+    {
+        var wishlist = await db.Wishlists
+            .Include(w => w.Items)
+            .FirstOrDefaultAsync(w => w.Code == code);
+
+        if (wishlist is null)
+        {
+            return TypedResults.NotFound($"Lista '{code}' no encontrada.");
+        }
+
+        var itemIds = (request.ItemIds ?? []).ToHashSet();
+        var now = DateTime.UtcNow;
+        foreach (var item in wishlist.Items.Where(i => itemIds.Contains(i.Id) && !i.IsGifted))
+        {
+            item.IsGifted = true;
+            item.GiftedAt = now;
+        }
+        await db.SaveChangesAsync();
+
+        return TypedResults.Ok(ToDto(wishlist));
+    }
+
     private static (string OwnerName, string? Note, string? Error) ValidateHeader(SaveWishlistRequest request)
     {
         var ownerName = (request.OwnerName ?? string.Empty).Trim();
@@ -216,6 +246,7 @@ public static class WishlistEndpoints
         w.UpdatedAt,
         w.Items
             .Select(i => new WishlistItemDto(
-                i.ItemType, i.Slug, i.VariantId, i.Name, i.VariantLabel, i.ImageUrl, i.UnitPrice, i.Quantity))
+                i.Id, i.ItemType, i.Slug, i.VariantId, i.Name, i.VariantLabel, i.ImageUrl, i.UnitPrice, i.Quantity,
+                i.IsGifted))
             .ToList());
 }
