@@ -15,4 +15,5 @@ public record UpdateOrderRequest(
     Guid? DeliveryZoneId,
     Guid? PackagingOptionId,
     List<CreateOrderItemRequest> Items,
-    string? Notes);
+    string? Notes,
+    decimal? DiscountAmount);

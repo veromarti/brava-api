@@ -120,6 +120,7 @@ public class BravaDbContext(DbContextOptions<BravaDbContext> options) : DbContex
         modelBuilder.Entity<Order>().Property(o => o.Subtotal).HasPrecision(12, 2);
         modelBuilder.Entity<Order>().Property(o => o.DeliveryFee).HasPrecision(12, 2);
         modelBuilder.Entity<Order>().Property(o => o.PackagingCost).HasPrecision(12, 2);
+        modelBuilder.Entity<Order>().Property(o => o.DiscountAmount).HasPrecision(12, 2);
         modelBuilder.Entity<Order>().Property(o => o.Total).HasPrecision(12, 2);
 
         // SetNull everywhere the link is optional and the order already

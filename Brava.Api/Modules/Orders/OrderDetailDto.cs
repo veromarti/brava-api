@@ -20,6 +20,7 @@ public record OrderDetailDto(
     string? PackagingOptionName,
     decimal PackagingCost,
     decimal Subtotal,
+    decimal DiscountAmount,
     decimal Total,
     string? Notes,
     DateTime CreatedAt,

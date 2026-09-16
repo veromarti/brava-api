@@ -8,12 +8,17 @@ public record OrderMetricsDto(
     /// cancelled; Cancelado never counts. This is the "completed orders" basis
     /// for every money figure below.</summary>
     int CompletedOrdersCount,
-    /// <summary>Sum of Subtotal (product sales only, no delivery fee).</summary>
+    /// <summary>Sum of (Subtotal - DiscountAmount) — product sales actually
+    /// charged, no delivery fee. Net of discounts so a discounted order
+    /// doesn't overstate real income.</summary>
     decimal Revenue,
     /// <summary>Sum of DeliveryFee.</summary>
     decimal DeliveryIncome,
     /// <summary>Revenue + DeliveryIncome — sum of Total.</summary>
     decimal TotalIncome,
+    /// <summary>Sum of DiscountAmount across counted orders — how much was
+    /// given away, for visibility alongside Revenue.</summary>
+    decimal TotalDiscounts,
     /// <summary>Sum of UnitCost * Quantity across order items. A null UnitCost
     /// counts as 0 here — see HasIncompleteCost.</summary>
     decimal Cogs,

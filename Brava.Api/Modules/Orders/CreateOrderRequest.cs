@@ -4,7 +4,9 @@ namespace Brava.Api.Modules.Orders;
 // whoever is logged in — one admin often enters an order a colleague took
 // over WhatsApp, so the panel has to ask rather than infer it from the token.
 // PackagingOptionId is which bag/box packed the order — an internal cost,
-// never added to Subtotal/Total (see Order.PackagingCost).
+// never added to Subtotal/Total (see Order.PackagingCost). DiscountAmount is
+// optional (null treated as 0) — an admin-only concern, not offered on the
+// storefront's own checkout.
 public record CreateOrderRequest(
     string ContactName,
     string ContactPhone,
@@ -13,7 +15,8 @@ public record CreateOrderRequest(
     Guid? PackagingOptionId,
     Guid CreatedByAdminId,
     List<CreateOrderItemRequest> Items,
-    string? Notes);
+    string? Notes,
+    decimal? DiscountAmount);
 
 /// <summary>Exactly one of ProductVariantId / ComboId must be set — a kit is one line, not its members expanded.</summary>
 public record CreateOrderItemRequest(Guid? ProductVariantId, Guid? ComboId, int Quantity);

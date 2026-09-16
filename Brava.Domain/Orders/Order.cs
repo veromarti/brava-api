@@ -86,7 +86,16 @@ public class Order
     /// <summary>Sum of the line totals.</summary>
     public decimal Subtotal { get; set; }
 
-    /// <summary><see cref="Subtotal"/> + <see cref="DeliveryFee"/>.</summary>
+    /// <summary>
+    /// Flat discount in whole COP, admin-applied only — never available on
+    /// the storefront's own checkout (CreateStorefrontOrderRequest has no
+    /// such field). Recognized revenue in the financial metrics is Subtotal
+    /// minus this, not the pre-discount Subtotal, so a discounted order
+    /// doesn't overstate real income/profit.
+    /// </summary>
+    public decimal DiscountAmount { get; set; }
+
+    /// <summary><see cref="Subtotal"/> + <see cref="DeliveryFee"/> - <see cref="DiscountAmount"/>.</summary>
     public decimal Total { get; set; }
 
     public string? Notes { get; set; }

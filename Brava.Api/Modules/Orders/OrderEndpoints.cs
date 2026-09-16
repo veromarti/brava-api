@@ -113,8 +113,14 @@ public static class OrderEndpoints
             return TypedResults.BadRequest(itemsError);
         }
 
-        var customer = await FindOrCreateCustomerAsync(db, contactName, contactPhone);
         var subtotal = orderItems!.Sum(i => i.LineTotal);
+        var (discountAmount, discountError) = ValidateDiscount(request.DiscountAmount, subtotal, deliveryFee);
+        if (discountError is not null)
+        {
+            return TypedResults.BadRequest(discountError);
+        }
+
+        var customer = await FindOrCreateCustomerAsync(db, contactName, contactPhone);
         var sequence = await NextOrderSequenceAsync(db);
         var now = DateTime.UtcNow;
 
@@ -134,7 +140,8 @@ public static class OrderEndpoints
             PackagingOptionId = request.PackagingOptionId,
             PackagingCost = packagingCost,
             Subtotal = subtotal,
-            Total = subtotal + deliveryFee,
+            DiscountAmount = discountAmount,
+            Total = subtotal + deliveryFee - discountAmount,
             Notes = request.Notes,
             CreatedByAdminId = admin.Id,
             CreatedAt = now,
@@ -203,6 +210,13 @@ public static class OrderEndpoints
             return TypedResults.BadRequest(itemsError);
         }
 
+        var subtotal = orderItems!.Sum(i => i.LineTotal);
+        var (discountAmount, discountError) = ValidateDiscount(request.DiscountAmount, subtotal, deliveryFee);
+        if (discountError is not null)
+        {
+            return TypedResults.BadRequest(discountError);
+        }
+
         order.ContactName = contactName;
         order.ContactPhone = contactPhone;
         order.DeliveryAddress = deliveryAddress;
@@ -220,9 +234,9 @@ public static class OrderEndpoints
         db.OrderItems.RemoveRange(order.Items);
         db.OrderItems.AddRange(orderItems!);
 
-        var subtotal = orderItems!.Sum(i => i.LineTotal);
         order.Subtotal = subtotal;
-        order.Total = subtotal + deliveryFee;
+        order.DiscountAmount = discountAmount;
+        order.Total = subtotal + deliveryFee - discountAmount;
         order.UpdatedAt = DateTime.UtcNow;
 
         await db.SaveChangesAsync();
@@ -301,6 +315,7 @@ public static class OrderEndpoints
             PackagingOptionId = null,
             PackagingCost = 0m,
             Subtotal = subtotal,
+            DiscountAmount = 0m,
             Total = subtotal,
             Notes = notes,
             CreatedByAdminId = null,
@@ -398,7 +413,7 @@ public static class OrderEndpoints
             o.Id, o.Number, o.Status, o.PaymentStatus, o.PaymentMethod, o.PaidAt, o.CustomerId,
             o.ContactName, o.ContactPhone, o.DeliveryAddress, o.DeliveryZoneId, o.DeliveryZone?.Name,
             o.DeliveryFee, o.PackagingOptionId, o.PackagingOption?.Name, o.PackagingCost,
-            o.Subtotal, o.Total, o.Notes, o.CreatedAt,
+            o.Subtotal, o.DiscountAmount, o.Total, o.Notes, o.CreatedAt,
             o.CreatedByAdminId, adminEmail,
             o.Items.Select(i => new OrderItemDetailDto(
                 i.Id, i.ProductVariantId, i.ComboId, i.Description, i.UnitPrice, i.UnitCost, i.Quantity, i.LineTotal))
@@ -425,6 +440,25 @@ public static class OrderEndpoints
         }
         var packaging = await db.PackagingOptions.FirstOrDefaultAsync(p => p.Id == packagingOptionId);
         return packaging is null ? (0m, $"Empaque '{packagingOptionId}' no encontrado.") : (packaging.Price, null);
+    }
+
+    // Shared by CreateOrder and UpdateOrder — null treated as "no discount".
+    // Capped at subtotal+deliveryFee so Total can never go negative; the caps
+    // are re-checked against the *current* subtotal/deliveryFee every time
+    // (not carried over from a previous edit), so shrinking an order's items
+    // can't leave a stale discount larger than the new total.
+    private static (decimal Amount, string? Error) ValidateDiscount(decimal? requested, decimal subtotal, decimal deliveryFee)
+    {
+        var amount = requested ?? 0m;
+        if (amount < 0)
+        {
+            return (0m, "El descuento no puede ser negativo.");
+        }
+        if (amount > subtotal + deliveryFee)
+        {
+            return (0m, "El descuento no puede ser mayor al subtotal más el envío.");
+        }
+        return (amount, null);
     }
 
     private static string? ValidateItemRequests(List<CreateOrderItemRequest>? items)
