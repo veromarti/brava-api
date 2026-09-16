@@ -137,6 +137,7 @@ app.UseAuthorization();
 
 app.MapProductEndpoints();
 app.MapVariantEndpoints();
+app.MapCatalogueImportExportEndpoints();
 app.MapImageEndpoints();
 app.MapBrandEndpoints();
 app.MapCategoryEndpoints();
