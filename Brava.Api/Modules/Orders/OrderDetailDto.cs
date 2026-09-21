@@ -24,9 +24,12 @@ public record OrderDetailDto(
     decimal Total,
     string? Notes,
     DateTime CreatedAt,
-    // Null when the customer created this order themselves from the
-    // storefront — CreatedByAdminEmail is null too until an admin claims it
-    // via PUT /api/orders/{number}/admin.
+    // Seller is null when the customer created this order themselves from
+    // the storefront and no one has assigned it yet (PUT
+    // /api/orders/{number}/seller). CreatedByAdminId/CreatedByAdminEmail are
+    // historical only — orders created before Seller existed have those set
+    // instead; new orders never do (see Order.CreatedByAdminId's doc comment).
+    string? Seller,
     Guid? CreatedByAdminId,
     string? CreatedByAdminEmail,
     List<OrderItemDetailDto> Items);

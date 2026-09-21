@@ -101,11 +101,25 @@ public class Order
     public string? Notes { get; set; }
 
     /// <summary>
-    /// Which admin created the order (id only — no nav needed yet). Null for
-    /// an order the customer created themselves from the storefront ("Pedir
-    /// por WhatsApp") — an admin can claim it later via PUT .../admin.
+    /// Which admin login created the order. Superseded by <see cref="Seller"/>
+    /// — new/updated orders no longer set this, it's kept only so orders
+    /// created before that change keep their historical attribution instead
+    /// of losing it in a migration. Null for an order the customer created
+    /// themselves from the storefront ("Pedir por WhatsApp"), same as before.
     /// </summary>
     public Guid? CreatedByAdminId { get; set; }
+
+    /// <summary>
+    /// Which of BRAVA's sellers this order is attributed to — chosen on
+    /// creation from a small fixed list (see OrderEndpoints.AllowedSellers),
+    /// or set later via PUT /api/orders/{number}/seller (the only way a
+    /// customer-created storefront order gets one, since "Pedir por
+    /// WhatsApp" never asks). Deliberately not a real admin login account —
+    /// this is just an attribution label, not an authentication concept, so
+    /// it doesn't need its own accounts/passwords for three people who only
+    /// need to show up in a dropdown.
+    /// </summary>
+    public string? Seller { get; set; }
 
     public DateTime CreatedAt { get; set; }
 

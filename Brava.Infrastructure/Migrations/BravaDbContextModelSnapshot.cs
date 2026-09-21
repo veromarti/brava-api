@@ -529,6 +529,10 @@ namespace Brava.Infrastructure.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("payment_status");
 
+                    b.Property<string>("Seller")
+                        .HasColumnType("text")
+                        .HasColumnName("seller");
+
                     b.Property<int>("Sequence")
                         .HasColumnType("integer")
                         .HasColumnName("sequence");

@@ -16,6 +16,13 @@ public static class OrderEndpoints
     private const int MaxContactFieldLength = 200;
     private const int MaxNotesLength = 1000;
 
+    // The fixed list of people who sell for BRAVA — a plain attribution
+    // label on the order, not a login account (see Order.Seller's doc
+    // comment). A hardcoded array rather than a database table: three names
+    // that change rarely enough that a code change + deploy is fine, and it
+    // avoids standing up a whole CRUD surface for something this small.
+    private static readonly string[] AllowedSellers = ["Karen", "Julieta", "Veronica"];
+
     public static IEndpointRouteBuilder MapOrderEndpoints(this IEndpointRouteBuilder app)
     {
         // Admin-only — the panel's own order entry.
@@ -25,7 +32,7 @@ public static class OrderEndpoints
         app.MapPut("/api/orders/{number}", UpdateOrder).RequireAuthorization();
         app.MapPut("/api/orders/{number}/status", UpdateOrderStatus).RequireAuthorization();
         app.MapPut("/api/orders/{number}/payment", MarkOrderPaid).RequireAuthorization();
-        app.MapPut("/api/orders/{number}/admin", AssignOrderAdmin).RequireAuthorization();
+        app.MapPut("/api/orders/{number}/seller", AssignOrderSeller).RequireAuthorization();
         // Anonymous — a customer hitting "Pedir por WhatsApp" on the storefront.
         app.MapPost("/api/orders/storefront", CreateStorefrontOrder);
         return app;
@@ -88,10 +95,10 @@ public static class OrderEndpoints
             return TypedResults.BadRequest(itemsShapeError);
         }
 
-        var admin = await db.Admins.FirstOrDefaultAsync(a => a.Id == request.CreatedByAdminId && a.IsActive);
-        if (admin is null)
+        var sellerError = ValidateSeller(request.Seller);
+        if (sellerError is not null)
         {
-            return TypedResults.NotFound($"Admin '{request.CreatedByAdminId}' no encontrado o inactivo.");
+            return TypedResults.BadRequest(sellerError);
         }
 
         var (deliveryFee, zoneError) = await ResolveDeliveryFeeAsync(request.DeliveryZoneId, db);
@@ -143,7 +150,7 @@ public static class OrderEndpoints
             DiscountAmount = discountAmount,
             Total = subtotal + deliveryFee - discountAmount,
             Notes = request.Notes,
-            CreatedByAdminId = admin.Id,
+            Seller = request.Seller,
             CreatedAt = now,
             UpdatedAt = now,
         };
@@ -367,10 +374,10 @@ public static class OrderEndpoints
         return TypedResults.Ok(await ToDetailDtoAsync(saved!, db));
     }
 
-    // Lets an admin claim/reassign a customer-created order once they follow
-    // up — the only way CreatedByAdminId gets set on one of those.
-    private static async Task<Results<Ok<OrderDetailDto>, NotFound<string>>> AssignOrderAdmin(
-        string number, AssignOrderAdminRequest request, IBravaDbContext db)
+    // Lets an admin claim/reassign a customer-created order to a seller once
+    // they follow up — the only way Seller gets set on one of those.
+    private static async Task<Results<Ok<OrderDetailDto>, NotFound<string>, BadRequest<string>>> AssignOrderSeller(
+        string number, AssignOrderSellerRequest request, IBravaDbContext db)
     {
         var order = await db.Orders.FirstOrDefaultAsync(o => o.Number == number);
         if (order is null)
@@ -378,13 +385,13 @@ public static class OrderEndpoints
             return TypedResults.NotFound($"Order '{number}' not found.");
         }
 
-        var admin = await db.Admins.FirstOrDefaultAsync(a => a.Id == request.AdminId && a.IsActive);
-        if (admin is null)
+        var sellerError = ValidateSeller(request.Seller);
+        if (sellerError is not null)
         {
-            return TypedResults.NotFound($"Admin '{request.AdminId}' no encontrado o inactivo.");
+            return TypedResults.BadRequest(sellerError);
         }
 
-        order.CreatedByAdminId = admin.Id;
+        order.Seller = request.Seller;
         order.UpdatedAt = DateTime.UtcNow;
         await db.SaveChangesAsync();
 
@@ -400,9 +407,11 @@ public static class OrderEndpoints
             .FirstOrDefaultAsync(o => o.Number == number);
 
     // Order.CreatedByAdminId is id-only (no nav property — see the domain
-    // comment), so the admin's email for display is a small separate lookup
-    // rather than an Include. Skipped entirely when null (customer-created,
-    // not yet claimed) rather than querying for a match that can't exist.
+    // comment) and historical only now (see Order.Seller's doc comment), so
+    // the admin's email for display is a small separate lookup rather than
+    // an Include. Skipped entirely when null (a post-Seller order, or a
+    // customer-created one not yet assigned) rather than querying for a
+    // match that can't exist.
     private static async Task<OrderDetailDto> ToDetailDtoAsync(Order o, IBravaDbContext db)
     {
         var adminEmail = o.CreatedByAdminId is { } adminId
@@ -414,7 +423,7 @@ public static class OrderEndpoints
             o.ContactName, o.ContactPhone, o.DeliveryAddress, o.DeliveryZoneId, o.DeliveryZone?.Name,
             o.DeliveryFee, o.PackagingOptionId, o.PackagingOption?.Name, o.PackagingCost,
             o.Subtotal, o.DiscountAmount, o.Total, o.Notes, o.CreatedAt,
-            o.CreatedByAdminId, adminEmail,
+            o.Seller, o.CreatedByAdminId, adminEmail,
             o.Items.Select(i => new OrderItemDetailDto(
                 i.Id, i.ProductVariantId, i.ComboId, i.Description, i.UnitPrice, i.UnitCost, i.Quantity, i.LineTotal))
                 .ToList());
@@ -460,6 +469,12 @@ public static class OrderEndpoints
         }
         return (amount, null);
     }
+
+    // Shared by CreateOrder and AssignOrderSeller.
+    private static string? ValidateSeller(string? seller) =>
+        seller is not null && AllowedSellers.Contains(seller)
+            ? null
+            : "Selecciona quién tomó el pedido.";
 
     private static string? ValidateItemRequests(List<CreateOrderItemRequest>? items)
     {
