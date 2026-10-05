@@ -162,8 +162,22 @@ public static class MetricsEndpoints
         var cogs = orders.Sum(o => o.Items.Sum(i => (i.UnitCost ?? 0m) * i.Quantity));
         var grossProfit = revenue - cogs - packagingCost;
 
+        // Same from/to window, but filtered on Investment.Date, not order
+        // status — an investment isn't an order and was never "Entregado".
+        var investmentsQuery = db.Investments.AsQueryable();
+        if (fromUtc is not null)
+        {
+            investmentsQuery = investmentsQuery.Where(i => i.Date >= fromUtc.Value);
+        }
+        if (toUtc is not null)
+        {
+            investmentsQuery = investmentsQuery.Where(i => i.Date < toUtc.Value.AddDays(1));
+        }
+        var totalInvestments = await investmentsQuery.SumAsync(i => (decimal?)i.Amount) ?? 0m;
+        var netBalance = grossProfit - totalInvestments;
+
         return TypedResults.Ok(new OrderMetricsDto(
             from, to, orders.Count, revenue, deliveryIncome, totalIncome, totalDiscounts, cogs, packagingCost,
-            grossProfit, hasIncompleteCost));
+            grossProfit, totalInvestments, netBalance, hasIncompleteCost));
     }
 }

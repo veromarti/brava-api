@@ -4,6 +4,7 @@ using Brava.Domain.Categories;
 using Brava.Domain.Combos;
 using Brava.Domain.Customers;
 using Brava.Domain.Delivery;
+using Brava.Domain.Investments;
 using Brava.Domain.Orders;
 using Brava.Domain.Packaging;
 using Brava.Domain.Products;
@@ -35,6 +36,7 @@ public interface IBravaDbContext
     DbSet<OrderItem> OrderItems { get; }
     DbSet<Wishlist> Wishlists { get; }
     DbSet<WishlistItem> WishlistItems { get; }
+    DbSet<Investment> Investments { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

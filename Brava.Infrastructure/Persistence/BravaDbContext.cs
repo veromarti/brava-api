@@ -5,6 +5,7 @@ using Brava.Domain.Categories;
 using Brava.Domain.Combos;
 using Brava.Domain.Customers;
 using Brava.Domain.Delivery;
+using Brava.Domain.Investments;
 using Brava.Domain.Orders;
 using Brava.Domain.Packaging;
 using Brava.Domain.Products;
@@ -31,6 +32,7 @@ public class BravaDbContext(DbContextOptions<BravaDbContext> options) : DbContex
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
     public DbSet<Wishlist> Wishlists => Set<Wishlist>();
     public DbSet<WishlistItem> WishlistItems => Set<WishlistItem>();
+    public DbSet<Investment> Investments => Set<Investment>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -112,6 +114,8 @@ public class BravaDbContext(DbContextOptions<BravaDbContext> options) : DbContex
 
         modelBuilder.Entity<PackagingOption>().HasIndex(p => p.Name).IsUnique();
         modelBuilder.Entity<PackagingOption>().Property(p => p.Price).HasPrecision(12, 2);
+
+        modelBuilder.Entity<Investment>().Property(i => i.Amount).HasPrecision(12, 2);
 
         modelBuilder.Entity<Customer>().HasIndex(c => c.Phone).IsUnique();
 
