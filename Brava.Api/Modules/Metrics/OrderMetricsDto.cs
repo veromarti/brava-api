@@ -30,7 +30,9 @@ public record OrderMetricsDto(
     decimal GrossProfit,
     /// <summary>Sum of Investment.Amount in this same From/To window (filtered
     /// on Investment.Date, not Order status — investments aren't orders) —
-    /// marketing, equipment, rent, and other costs not tied to a single sale.</summary>
+    /// marketing, equipment, rent, and other costs not tied to a single sale.
+    /// Excludes the CompraInventario category: that cost is already in Cogs
+    /// once the stock sells, so including it here too would double-count it.</summary>
     decimal TotalInvestments,
     /// <summary>GrossProfit - TotalInvestments — the realistic bottom line for
     /// the period, not just order-level profit. Only trustworthy when

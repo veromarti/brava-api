@@ -1,4 +1,5 @@
 using Brava.Application;
+using Brava.Domain.Investments;
 using Brava.Domain.Orders;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.EntityFrameworkCore;
@@ -164,7 +165,10 @@ public static class MetricsEndpoints
 
         // Same from/to window, but filtered on Investment.Date, not order
         // status — an investment isn't an order and was never "Entregado".
-        var investmentsQuery = db.Investments.AsQueryable();
+        // CompraInventario is excluded: that stock's cost is already in Cogs
+        // above once it sells, so folding it in here too would subtract the
+        // same peso twice.
+        var investmentsQuery = db.Investments.Where(i => i.Category != InvestmentCategory.CompraInventario);
         if (fromUtc is not null)
         {
             investmentsQuery = investmentsQuery.Where(i => i.Date >= fromUtc.Value);

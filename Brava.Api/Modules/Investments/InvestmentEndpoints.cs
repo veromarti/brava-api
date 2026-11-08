@@ -43,7 +43,7 @@ public static class InvestmentEndpoints
         var investments = await query
             .OrderByDescending(i => i.Date)
             .ThenByDescending(i => i.CreatedAt)
-            .Select(i => new InvestmentDto(i.Id, i.Description, i.Amount, i.Date))
+            .Select(i => new InvestmentDto(i.Id, i.Description, i.Category, i.Amount, i.Date))
             .ToListAsync();
 
         return TypedResults.Ok(investments);
@@ -65,11 +65,16 @@ public static class InvestmentEndpoints
         {
             return TypedResults.BadRequest("El monto debe ser mayor a 0.");
         }
+        if (!Enum.IsDefined(request.Category))
+        {
+            return TypedResults.BadRequest("La categoría no es válida.");
+        }
 
         var now = DateTime.UtcNow;
         var investment = new Investment
         {
             Description = description,
+            Category = request.Category,
             Amount = request.Amount,
             Date = DateTime.SpecifyKind(request.Date.Date, DateTimeKind.Utc),
             CreatedAt = now,
@@ -80,7 +85,7 @@ public static class InvestmentEndpoints
 
         return TypedResults.Created(
             $"/api/investments/{investment.Id}",
-            new InvestmentDto(investment.Id, investment.Description, investment.Amount, investment.Date));
+            new InvestmentDto(investment.Id, investment.Description, investment.Category, investment.Amount, investment.Date));
     }
 
     private static async Task<Results<NoContent, NotFound<string>>> DeleteInvestment(Guid id, IBravaDbContext db)

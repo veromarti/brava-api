@@ -116,6 +116,12 @@ public class BravaDbContext(DbContextOptions<BravaDbContext> options) : DbContex
         modelBuilder.Entity<PackagingOption>().Property(p => p.Price).HasPrecision(12, 2);
 
         modelBuilder.Entity<Investment>().Property(i => i.Amount).HasPrecision(12, 2);
+        // Existing rows predate the category split; defaulted to Otro rather
+        // than CompraInventario so this migration doesn't silently change a
+        // past period's already-reported NetBalance. Recategorize by hand if
+        // an existing row was actually a stock purchase.
+        modelBuilder.Entity<Investment>().Property(i => i.Category)
+            .HasDefaultValue(InvestmentCategory.Otro);
 
         modelBuilder.Entity<Customer>().HasIndex(c => c.Phone).IsUnique();
 
