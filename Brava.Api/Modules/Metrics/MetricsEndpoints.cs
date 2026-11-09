@@ -13,6 +13,7 @@ public static class MetricsEndpoints
         app.MapGet("/api/metrics/catalogue", GetCatalogueMetrics).RequireAuthorization();
         app.MapGet("/api/metrics/catalogue/details", GetCatalogueHealthDetails).RequireAuthorization();
         app.MapGet("/api/metrics/orders", GetOrderMetrics).RequireAuthorization();
+        app.MapGet("/api/metrics/orders/series", GetOrderSeries).RequireAuthorization();
         return app;
     }
 
@@ -183,5 +184,73 @@ public static class MetricsEndpoints
         return TypedResults.Ok(new OrderMetricsDto(
             from, to, orders.Count, revenue, deliveryIncome, totalIncome, totalDiscounts, cogs, packagingCost,
             grossProfit, totalInvestments, netBalance, hasIncompleteCost));
+    }
+
+    // Revenue/order-count per bucket, for the "ventas en el tiempo" chart.
+    // Bucket size is picked from the range's span, not requested by the
+    // caller: a day-by-day series over a year would be hundreds of
+    // unreadable bars, so a wide enough range steps up to Week, then Month.
+    // With no from/to (the storefront's "Ver todo"), the range is the span
+    // of the matched orders themselves rather than all of history.
+    private static async Task<Results<Ok<OrderSeriesDto>, BadRequest<string>>> GetOrderSeries(
+        IBravaDbContext db, DateTime? from, DateTime? to)
+    {
+        var fromUtc = from is null ? (DateTime?)null : DateTime.SpecifyKind(from.Value.Date, DateTimeKind.Utc);
+        var toUtc = to is null ? (DateTime?)null : DateTime.SpecifyKind(to.Value.Date, DateTimeKind.Utc);
+        if (fromUtc is not null && toUtc is not null && fromUtc > toUtc)
+        {
+            return TypedResults.BadRequest("'from' no puede ser posterior a 'to'.");
+        }
+
+        var query = db.Orders.Where(o => o.Status == OrderStatus.Entregado);
+        if (fromUtc is not null)
+        {
+            query = query.Where(o => o.CreatedAt >= fromUtc.Value);
+        }
+        if (toUtc is not null)
+        {
+            query = query.Where(o => o.CreatedAt < toUtc.Value.AddDays(1));
+        }
+
+        var orders = await query
+            .Select(o => new { o.CreatedAt, o.Subtotal, o.DiscountAmount })
+            .ToListAsync();
+
+        var today = DateTime.UtcNow.Date;
+        var effectiveFrom = fromUtc?.Date ?? (orders.Count > 0 ? orders.Min(o => o.CreatedAt.Date) : today);
+        var effectiveTo = toUtc?.Date ?? (orders.Count > 0 ? orders.Max(o => o.CreatedAt.Date) : today);
+
+        var spanDays = (effectiveTo - effectiveFrom).Days;
+        var granularity = spanDays <= 42 ? SeriesGranularity.Day
+            : spanDays <= 365 ? SeriesGranularity.Week
+            : SeriesGranularity.Month;
+
+        DateTime BucketStart(DateTime date) => granularity switch
+        {
+            SeriesGranularity.Week => date.Date.AddDays(-(((int)date.DayOfWeek + 6) % 7)),
+            SeriesGranularity.Month => new DateTime(date.Year, date.Month, 1, 0, 0, 0, date.Kind),
+            _ => date.Date,
+        };
+
+        var byBucket = orders
+            .GroupBy(o => BucketStart(o.CreatedAt))
+            .ToDictionary(g => g.Key, g => (Revenue: g.Sum(o => o.Subtotal - o.DiscountAmount), Count: g.Count()));
+
+        var points = new List<OrderSeriesPointDto>();
+        var cursor = BucketStart(effectiveFrom);
+        var end = BucketStart(effectiveTo);
+        while (cursor <= end)
+        {
+            var (revenue, count) = byBucket.TryGetValue(cursor, out var bucket) ? bucket : (0m, 0);
+            points.Add(new OrderSeriesPointDto(cursor, revenue, count));
+            cursor = granularity switch
+            {
+                SeriesGranularity.Week => cursor.AddDays(7),
+                SeriesGranularity.Month => cursor.AddMonths(1),
+                _ => cursor.AddDays(1),
+            };
+        }
+
+        return TypedResults.Ok(new OrderSeriesDto(effectiveFrom, effectiveTo, granularity, points));
     }
 }
