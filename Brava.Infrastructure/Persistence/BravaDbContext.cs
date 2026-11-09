@@ -116,12 +116,16 @@ public class BravaDbContext(DbContextOptions<BravaDbContext> options) : DbContex
         modelBuilder.Entity<PackagingOption>().Property(p => p.Price).HasPrecision(12, 2);
 
         modelBuilder.Entity<Investment>().Property(i => i.Amount).HasPrecision(12, 2);
-        // Existing rows predate the category split; defaulted to Otro rather
-        // than CompraInventario so this migration doesn't silently change a
-        // past period's already-reported NetBalance. Recategorize by hand if
-        // an existing row was actually a stock purchase.
-        modelBuilder.Entity<Investment>().Property(i => i.Category)
-            .HasDefaultValue(InvestmentCategory.Otro);
+        // No EF-level HasDefaultValue here on purpose: EF treats a property's
+        // CLR default as a sentinel meaning "unset, use the DB default" —
+        // and InvestmentCategory's CLR default is CompraInventario (its
+        // first member, value 0). Configuring a default would silently
+        // replace CompraInventario with the default on every insert, which
+        // is exactly the one category this split exists for. The app always
+        // sets Category explicitly (CreateInvestmentRequest requires it), so
+        // there's no real "unset" case to default. The column still has a
+        // one-time DB-level default from the AddInvestmentCategory migration,
+        // applied only to the rows that existed before this column did.
 
         modelBuilder.Entity<Customer>().HasIndex(c => c.Phone).IsUnique();
 

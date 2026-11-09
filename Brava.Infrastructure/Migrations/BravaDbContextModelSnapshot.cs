@@ -464,9 +464,7 @@ namespace Brava.Infrastructure.Migrations
                         .HasColumnName("amount");
 
                     b.Property<int>("Category")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("integer")
-                        .HasDefaultValue(4)
                         .HasColumnName("category");
 
                     b.Property<DateTime>("CreatedAt")
