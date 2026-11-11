@@ -9,4 +9,5 @@ public record UpdateProductRequest(
     string Description,
     Guid BrandId,
     Guid CategoryId,
-    bool IsActive);
+    bool IsActive,
+    bool IsFeatured);

@@ -19,5 +19,6 @@ public record AdminProductDetailDto(
     Guid BrandId,
     Guid CategoryId,
     bool IsActive,
+    bool IsFeatured,
     List<VariantDto> Variants,
     List<ImageDto> Images);

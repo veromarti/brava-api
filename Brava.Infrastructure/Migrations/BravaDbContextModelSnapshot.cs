@@ -742,6 +742,10 @@ namespace Brava.Infrastructure.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("is_active");
 
+                    b.Property<bool>("IsFeatured")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_featured");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("text")
